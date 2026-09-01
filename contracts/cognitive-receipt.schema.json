@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CognitiveReceipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_id",
+    "task_id",
+    "idempotency_key",
+    "life_did",
+    "status",
+    "basis_state_sequence",
+    "basis_state_hash",
+    "projection_hash",
+    "output_text",
+    "output_hash",
+    "hermes_session_id",
+    "request_hash",
+    "started_at",
+    "completed_at",
+    "duplicate",
+    "error",
+    "schema_version"
+  ],
+  "properties": {
+    "receipt_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "idempotency_key": {
+      "type": "string"
+    },
+    "life_did": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "completed",
+        "error"
+      ]
+    },
+    "basis_state_sequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "basis_state_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "projection_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "output_text": {
+      "type": "string"
+    },
+    "output_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hermes_session_id": {
+      "type": "string"
+    },
+    "request_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "completed_at": {
+      "type": "string"
+    },
+    "duplicate": {
+      "type": "boolean"
+    },
+    "error": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "v0.2"
+    }
+  }
+}

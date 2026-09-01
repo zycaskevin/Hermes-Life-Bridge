@@ -1,0 +1,19 @@
+[Unit]
+Description=Hermes Life Bridge Cognition Service (HLB-002)
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=@PLUGIN_DIR@
+EnvironmentFile=-@HERMES_ENV@
+EnvironmentFile=-%h/.config/hermes-life-bridge.env
+Environment=PYTHONPATH=@PLUGIN_DIR@/src
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m hermes_life_bridge.cognition_cli serve
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

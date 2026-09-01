@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BridgePercept",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "bridge_event_id",
+    "idempotency_key",
+    "life_did",
+    "surface",
+    "platform",
+    "source_message_id",
+    "session_ref",
+    "turn_ref",
+    "payload_ref",
+    "content_fingerprint",
+    "observed_at",
+    "schema_version"
+  ],
+  "properties": {
+    "bridge_event_id": {
+      "type": "string"
+    },
+    "idempotency_key": {
+      "type": "string"
+    },
+    "life_did": {
+      "type": "string"
+    },
+    "surface": {
+      "enum": [
+        "gateway",
+        "cli"
+      ]
+    },
+    "platform": {
+      "type": "string"
+    },
+    "source_message_id": {
+      "type": "string"
+    },
+    "session_ref": {
+      "type": "string"
+    },
+    "turn_ref": {
+      "type": "string"
+    },
+    "payload_ref": {
+      "type": "string"
+    },
+    "content_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "observed_at": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "v0.1"
+    }
+  }
+}

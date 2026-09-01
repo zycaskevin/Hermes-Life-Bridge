@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.egg-info/
+.coverage
+htmlcov/
+build/
+dist/
+.hlb0035.*
+.extract_hlb0035.pl

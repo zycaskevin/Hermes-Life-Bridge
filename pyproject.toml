@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-life-bridge"
+version = "0.3.5.dev0"
+description = "Bidirectional bridge between Hermes Agent and Life Runtime."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "jsonschema>=4"]
+
+[project.scripts]
+hermes-life = "hermes_life_bridge.cli:main"
+hermes-life-cognition = "hermes_life_bridge.cognition_cli:main"
+hermes-life-contact = "hermes_life_bridge.contact_cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"

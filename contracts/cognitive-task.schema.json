@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CognitiveTaskEnvelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "idempotency_key",
+    "life_did",
+    "event_id",
+    "basis_state_sequence",
+    "basis_state_hash",
+    "purpose",
+    "instruction",
+    "projection_ref",
+    "projection_hash",
+    "risk_level",
+    "created_at",
+    "expires_at",
+    "session_policy",
+    "schema_version"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "idempotency_key": {
+      "type": "string"
+    },
+    "life_did": {
+      "type": "string"
+    },
+    "event_id": {
+      "type": "string"
+    },
+    "basis_state_sequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "basis_state_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "purpose": {
+      "type": "string"
+    },
+    "instruction": {
+      "type": "string"
+    },
+    "projection_ref": {
+      "type": "string"
+    },
+    "projection_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "risk_level": {
+      "enum": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ]
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "expires_at": {
+      "type": "string"
+    },
+    "session_policy": {
+      "const": "task_isolated"
+    },
+    "schema_version": {
+      "const": "v0.2"
+    }
+  }
+}
