@@ -93,7 +93,7 @@ def test_schema_contains_only_privacy_minimized_operation_fields(tmp_path):
         "schema_version",
     }
     assert not ({"target", "chat_id", "thread_id", "message", "prompt", "payload"} & columns)
-    assert store.conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert store.conn.execute("PRAGMA user_version").fetchone()[0] == 2
     store.close()
 
 
@@ -406,7 +406,7 @@ def test_store_bytes_do_not_contain_runtime_repr_markers(tmp_path):
 def test_store_fails_closed_on_newer_schema_version(tmp_path):
     path = tmp_path / "operations.db"
     conn = sqlite3.connect(path)
-    conn.execute("PRAGMA user_version=2")
+    conn.execute("PRAGMA user_version=3")
     conn.commit()
     conn.close()
 
@@ -417,7 +417,7 @@ def test_store_fails_closed_on_newer_schema_version(tmp_path):
         OperationStore(str(path))
 
     conn = sqlite3.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
     conn.close()
 
 
@@ -438,4 +438,124 @@ def test_store_rejects_exact_route_as_operation_identity(tmp_path):
     with pytest.raises(ValueError, match="idempotency_key_must_not_be_exact_route"):
         store.reserve(_operation(idempotency_key="feishu:oc_private_chat"))
     assert store.list_operations() == []
+    store.close()
+
+
+def _percept_event(idempotency_key: str = "hermes:gateway:feishu:m1"):
+    return {
+        "event_id": "event-percept-outbox",
+        "life_did": "did:x",
+        "source_body_id": "hermes-gateway:feishu",
+        "modality": "system",
+        "observed_at": "2026-09-02T05:00:00Z",
+        "payload_ref": "hermes://gateway/feishu/message/m1",
+        "salience_hint": 0.5,
+        "idempotency_key": idempotency_key,
+        "schema_version": "v0.1",
+    }
+
+
+def test_percept_outbox_is_atomic_with_operation_reservation(tmp_path):
+    store = _store(tmp_path)
+    operation = _operation(
+        "op-percept-outbox",
+        kind=RetryClass.PERCEPT,
+        idempotency_key="hermes:gateway:feishu:m1",
+        request_hash="d" * 64,
+    )
+    saved, created = store.reserve_percept(operation, _percept_event())
+    assert created is True
+    assert saved == operation
+    assert store.get_percept_event(operation.operation_id) == _percept_event()
+    store.close()
+
+    reopened = _store(tmp_path)
+    assert reopened.get(operation.operation_id) == operation
+    assert reopened.get_percept_event(operation.operation_id) == _percept_event()
+    reopened.close()
+
+
+def test_percept_outbox_rejects_raw_content_shape(tmp_path):
+    store = _store(tmp_path)
+    operation = _operation(
+        "op-percept-private",
+        kind=RetryClass.PERCEPT,
+        idempotency_key="hermes:gateway:feishu:m2",
+        request_hash="e" * 64,
+    )
+    event = _percept_event("hermes:gateway:feishu:m2")
+    event["message"] = "PRIVATE BODY MUST NOT ENTER OUTBOX"
+    with pytest.raises(ValueError, match="percept_outbox_event_shape_invalid"):
+        store.reserve_percept(operation, event)
+    assert store.get(operation.operation_id) is None
+    store.close()
+
+
+def test_percept_outbox_payload_is_removed_after_clear(tmp_path):
+    store = _store(tmp_path)
+    operation = _operation(
+        "op-percept-clear",
+        kind=RetryClass.PERCEPT,
+        idempotency_key="hermes:gateway:feishu:m3",
+        request_hash="f" * 64,
+    )
+    store.reserve_percept(operation, _percept_event("hermes:gateway:feishu:m3"))
+    store.clear_percept_event(operation.operation_id)
+    assert store.get_percept_event(operation.operation_id) is None
+    store.close()
+
+
+def test_schema_v1_migrates_to_v2_without_losing_existing_operations(tmp_path):
+    path = tmp_path / "operations.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE bridge_operations(
+            operation_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            request_hash TEXT NOT NULL,
+            state TEXT NOT NULL,
+            attempt INTEGER NOT NULL,
+            next_attempt_at TEXT,
+            delivery_outcome TEXT,
+            last_error_code TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            UNIQUE(kind, idempotency_key)
+        );
+        PRAGMA user_version=1;
+        """
+    )
+    conn.execute(
+        "INSERT INTO bridge_operations VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "legacy-cognition-op",
+            "cognition",
+            "legacy-cognition-idem",
+            "a" * 64,
+            "completed",
+            1,
+            None,
+            None,
+            None,
+            "2026-09-02T00:00:00Z",
+            "2026-09-02T00:00:01Z",
+            "v0.4",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    store = OperationStore(str(path))
+    assert store.conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert store.get("legacy-cognition-op").state is OperationState.COMPLETED
+    tables = {
+        row[0]
+        for row in store.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    assert "percept_outbox" in tables
     store.close()

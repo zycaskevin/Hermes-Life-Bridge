@@ -174,3 +174,19 @@ Next: **HLB-004.6 — Doctor vNext**.
 - Doctor never echoes exact private route
 
 Next: **HLB-004.7 — Failure Injection Suite**.
+
+### HLB-004.7 — Failure Injection & Automatic Recovery ✅ COMPLETE
+
+- durable content-free Percept outbox
+- OperationStore schema v2 with v1 migration
+- Runtime-down automatic bounded replay
+- ACK-loss idempotent recovery with one Runtime state advance
+- crash-before-send and crash-after-persist recovery
+- Percept recovery systemd daemon
+- Cognition bounded retry wired into real service path
+- Cognition receipt-first crash reconciliation
+- corrupt DB / stale route / plugin reload injections
+- reliability services auto-restart with no start-limit lockout
+- full legacy + reliability regression suite retained
+
+Next: **HLB-004.8 — Soak, Maintenance & Release Closure**.

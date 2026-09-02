@@ -1,15 +1,17 @@
 [Unit]
 Description=Hermes Life Bridge Contact Delivery Service
 After=default.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 WorkingDirectory=@PLUGIN_DIR@
 EnvironmentFile=-%h/.config/hermes-life-bridge.env
+Environment=PYTHONPATH=@PLUGIN_DIR@/src
 Environment=PYTHONUNBUFFERED=1
 ExecStart=@PLUGIN_DIR@/.venv/bin/python -m hermes_life_bridge.contact_cli serve
 Restart=on-failure
-RestartSec=3
+RestartSec=1
 NoNewPrivileges=true
 PrivateTmp=true
 

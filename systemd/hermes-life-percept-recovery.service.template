@@ -1,16 +1,15 @@
 [Unit]
-Description=Hermes Life Bridge Cognition Service (HLB-002)
+Description=Hermes Life Bridge Percept Recovery Service
 After=default.target
 StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 WorkingDirectory=@PLUGIN_DIR@
-EnvironmentFile=-@HERMES_ENV@
 EnvironmentFile=-%h/.config/hermes-life-bridge.env
 Environment=PYTHONPATH=@PLUGIN_DIR@/src
 Environment=PYTHONUNBUFFERED=1
-ExecStart=@PLUGIN_DIR@/.venv/bin/python -m hermes_life_bridge.cognition_cli serve
+ExecStart=@PLUGIN_DIR@/.venv/bin/python -m hermes_life_bridge.percept_recovery_service --interval 0.5
 Restart=on-failure
 RestartSec=1
 NoNewPrivileges=true

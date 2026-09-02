@@ -18,6 +18,7 @@ dev = ["pytest>=8", "jsonschema>=4"]
 hermes-life = "hermes_life_bridge.cli:main"
 hermes-life-cognition = "hermes_life_bridge.cognition_cli:main"
 hermes-life-contact = "hermes_life_bridge.contact_cli:main"
+hermes-life-percept-recovery = "hermes_life_bridge.percept_recovery_service:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

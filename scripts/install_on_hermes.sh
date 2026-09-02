@@ -103,6 +103,20 @@ done
   exit 6
 }
 
+
+# HLB-004 ingress Percept recovery service. This daemon replays only the
+# content-free canonical Percept outbox after temporary Runtime failures.
+PERCEPT_TEMPLATE="$ROOT/systemd/hermes-life-percept-recovery.service.template"
+PERCEPT_UNIT="$UNIT_DIR/hermes-life-percept-recovery.service"
+sed "s|@PLUGIN_DIR@|$PLUGIN_DIR|g" "$PERCEPT_TEMPLATE" > "$PERCEPT_UNIT"
+systemctl --user daemon-reload
+systemctl --user enable --now hermes-life-percept-recovery.service
+systemctl --user is-active --quiet hermes-life-percept-recovery.service || {
+  systemctl --user status hermes-life-percept-recovery.service --no-pager || true
+  echo "FAIL: HLB Percept recovery service not active"
+  exit 8
+}
+
 echo
 echo "Installed Hermes Life Bridge:"
 echo "  $PLUGIN_DIR"

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import re
 import sqlite3
 import threading
 
+from .representation import canonicalize_operational_value, contains_forbidden_representation_bytes
 from .reliability_contract import (
     BridgeOperation,
     DeliveryOutcome,
@@ -37,7 +39,7 @@ class OperationStore:
     operational state, not canonical Life Runtime state or memory.
     """
 
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(self, path: str):
         self.path = Path(path)
@@ -92,9 +94,15 @@ class OperationStore:
                     ON bridge_operations(kind, state);
                 CREATE INDEX IF NOT EXISTS idx_bridge_operations_retry_wait
                     ON bridge_operations(state, next_attempt_at);
+                CREATE TABLE IF NOT EXISTS percept_outbox(
+                    operation_id TEXT PRIMARY KEY,
+                    event_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(operation_id) REFERENCES bridge_operations(operation_id) ON DELETE CASCADE
+                );
                 """
             )
-            if current_schema == 0:
+            if current_schema < self.SCHEMA_VERSION:
                 self.conn.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
             self.conn.commit()
         self._secure_files()
@@ -184,6 +192,121 @@ class OperationStore:
             data["updated_at"],
             data["schema_version"],
         )
+
+    @staticmethod
+    def _canonical_percept_event(event: dict) -> dict:
+        allowed = {
+            "event_id",
+            "life_did",
+            "source_body_id",
+            "modality",
+            "observed_at",
+            "payload_ref",
+            "salience_hint",
+            "idempotency_key",
+            "schema_version",
+        }
+        if not isinstance(event, dict) or set(event) != allowed:
+            raise ValueError("percept_outbox_event_shape_invalid")
+        safe = canonicalize_operational_value(event)
+        raw = json.dumps(safe, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        if contains_forbidden_representation_bytes(raw):
+            raise ValueError("percept_outbox_representation_forbidden")
+        for forbidden in ("message", "text", "content", "target", "chat_id", "thread_id"):
+            if forbidden in safe:
+                raise ValueError("percept_outbox_private_payload_forbidden")
+        return safe
+
+    def reserve_percept(
+        self,
+        operation: BridgeOperation,
+        event: dict,
+    ) -> tuple[BridgeOperation, bool]:
+        """Atomically reserve a Percept operation and its content-free Runtime event."""
+        self._validate_initial(operation)
+        if operation.kind is not RetryClass.PERCEPT:
+            raise ValueError("reserve_percept_requires_percept_operation")
+        safe_event = self._canonical_percept_event(event)
+        if safe_event["idempotency_key"] != operation.idempotency_key:
+            raise ValueError("percept_outbox_idempotency_mismatch")
+        payload = json.dumps(safe_event, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        with self._lock:
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.conn.execute(
+                    "SELECT * FROM bridge_operations WHERE kind=? AND idempotency_key=?",
+                    (operation.kind.value, operation.idempotency_key),
+                ).fetchone()
+                if row is not None:
+                    existing = self._row_to_operation(row)
+                    if existing.request_hash != operation.request_hash:
+                        raise OperationConflictError("idempotency_key_reused_with_different_request")
+                    outbox = self.conn.execute(
+                        "SELECT event_json FROM percept_outbox WHERE operation_id=?",
+                        (existing.operation_id,),
+                    ).fetchone()
+                    if existing.state is not OperationState.COMPLETED and outbox is None:
+                        raise OperationCorruptionError("percept_outbox_payload_missing")
+                    if outbox is not None and outbox["event_json"] != payload:
+                        raise OperationConflictError("percept_outbox_payload_conflict")
+                    self.conn.commit()
+                    return existing, False
+
+                collision = self.conn.execute(
+                    "SELECT 1 FROM bridge_operations WHERE operation_id=?",
+                    (operation.operation_id,),
+                ).fetchone()
+                if collision is not None:
+                    raise OperationConflictError("operation_id_reused")
+                self.conn.execute(
+                    """
+                    INSERT INTO bridge_operations(
+                        operation_id,kind,idempotency_key,request_hash,state,attempt,
+                        next_attempt_at,delivery_outcome,last_error_code,created_at,
+                        updated_at,schema_version
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    self._operation_values(operation),
+                )
+                self.conn.execute(
+                    "INSERT INTO percept_outbox(operation_id,event_json,created_at) VALUES(?,?,?)",
+                    (operation.operation_id, payload, operation.created_at),
+                )
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+        self._secure_files()
+        return operation, True
+
+    def get_percept_event(self, operation_id: str) -> dict | None:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT event_json FROM percept_outbox WHERE operation_id=?",
+                (operation_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            data = json.loads(row["event_json"])
+            return self._canonical_percept_event(data)
+        except Exception as exc:
+            raise OperationCorruptionError("invalid_percept_outbox_payload") from exc
+
+    def clear_percept_event(self, operation_id: str) -> None:
+        with self._lock:
+            self.conn.execute(
+                "DELETE FROM percept_outbox WHERE operation_id=?",
+                (operation_id,),
+            )
+            self.conn.commit()
+
+    def list_percept_outbox_operation_ids(self) -> list[str]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT operation_id FROM percept_outbox ORDER BY created_at, operation_id"
+            ).fetchall()
+        return [str(row["operation_id"]) for row in rows]
 
     def reserve(self, operation: BridgeOperation) -> tuple[BridgeOperation, bool]:
         """Reserve an initial operation.
