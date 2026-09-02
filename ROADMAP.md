@@ -85,3 +85,23 @@ Hard boundary: HLB-004 must not absorb Life Runtime LiveState, Concern, Memory, 
 - LR-M4 / Concern authority explicitly excluded
 
 Next: **HLB-004.2 — Durable Operation Store**.
+
+### HLB-004.2 — Durable Operation Store ✅ COMPLETE
+
+- SQLite `OperationStore` with WAL + `synchronous=FULL`
+- DB/WAL/SHM mode `0600`
+- privacy-minimized operation-only schema; no message/prompt/route payload columns
+- idempotent reservation + request-hash conflict detection
+- atomic state transitions with `BEGIN IMMEDIATE`
+- attempt increment only at durable `prepared → in_flight` boundary
+- durable `FAILED_SAFE → RETRY_WAIT` persistence
+- `DELIVERY_UNKNOWN` durable across restart and forbidden from retry scheduling
+- Contact-owner interrupted `in_flight → delivery_unknown` recovery primitive
+- Percept/Cognition interrupted operations intentionally untouched
+- concurrent double-start prevention
+- HLB-003.5 representation boundary enforced for durable identity
+- exact-route-shaped operation identity rejection
+- future SQLite schema version fails closed
+- `HLB_OPERATION_DB` configuration/default installer path
+
+Next: **HLB-004.3 — Retry Engine**.

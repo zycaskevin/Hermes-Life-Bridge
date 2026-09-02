@@ -24,3 +24,14 @@ def test_hermes_env_fallback_for_api_key(monkeypatch, tmp_path):
     cfg=BridgeConfig.from_env()
     assert cfg.hermes_api_key == "topsecret"
     assert cfg.hermes_model == "test-model"
+
+
+def test_operation_db_config_default_and_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.delenv("HLB_OPERATION_DB", raising=False)
+    cfg = BridgeConfig.from_env()
+    assert cfg.operation_db == str(tmp_path / "state" / "hermes-life-bridge" / "operations.sqlite3")
+
+    monkeypatch.setenv("HLB_OPERATION_DB", str(tmp_path / "custom-operations.db"))
+    cfg = BridgeConfig.from_env()
+    assert cfg.operation_db == str(tmp_path / "custom-operations.db")

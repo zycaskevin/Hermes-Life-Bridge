@@ -43,6 +43,7 @@ class BridgeConfig:
     contact_target: str = ""
     hermes_cli_path: str = "hermes"
     route_path: str = ""
+    operation_db: str = ""
 
     @classmethod
     def from_env(cls) -> "BridgeConfig":
@@ -86,4 +87,5 @@ class BridgeConfig:
             contact_target=get("HLB_CONTACT_TARGET", default=""),
             hermes_cli_path=get("HLB_HERMES_CLI", default="hermes"),
             route_path=get("HLB_ROUTE_PATH", default=str(state_home / "hermes-life-bridge" / "last_route.json")),
+            operation_db=get("HLB_OPERATION_DB", default=str(state_home / "hermes-life-bridge" / "operations.sqlite3")),
         )

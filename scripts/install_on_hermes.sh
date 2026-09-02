@@ -46,6 +46,7 @@ HLB_HERMES_API_BASE_URL=http://127.0.0.1:8642
 HLB_HERMES_ENV=$HERMES_ENV
 HLB_CONTACT_SOCKET=$RUNTIME_DIR/hermes-life-contact.sock
 HLB_CONTACT_DB=$STATE_HOME/hermes-life-bridge/contact.sqlite3
+HLB_OPERATION_DB=$STATE_HOME/hermes-life-bridge/operations.sqlite3
 HLB_CONTACT_DELIVERY_ENABLED=false
 HLB_CONTACT_TARGET=$CONTACT_TARGET_DISCOVERED
 HLB_ROUTE_PATH=$STATE_HOME/hermes-life-bridge/last_route.json

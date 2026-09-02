@@ -6,3 +6,8 @@ def test_release_installer_requires_service_restore_trap():
     doc=Path("docs/HLB-003.5-REPRESENTATION-BOUNDARY.md").read_text()
     assert "restore service state on EXIT" in doc
     assert "no provider send" in doc.lower()
+
+
+def test_installer_publishes_hlb004_operation_store_path():
+    installer = Path("scripts/install_on_hermes.sh").read_text()
+    assert "HLB_OPERATION_DB=$STATE_HOME/hermes-life-bridge/operations.sqlite3" in installer
