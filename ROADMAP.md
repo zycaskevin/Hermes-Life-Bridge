@@ -71,3 +71,17 @@ Planned scope:
 - 24h / 72h soak tests
 
 Hard boundary: HLB-004 must not absorb Life Runtime LiveState, Concern, Memory, Personality, Motivation, Contact Governance, or Agent orchestration responsibilities.
+
+### HLB-004.1 — Reliability Contract ✅ CONTRACT DEFINED
+
+- `BridgeOperation` privacy-minimized durable operation contract
+- `OperationState`: prepared / in-flight / retry-wait / completed / failed-safe / delivery-unknown / exhausted
+- `RetryClass`: Percept / Cognition / Contact
+- bounded `RetryPolicy` contract with Contact unknown-outcome retry prohibition
+- `DeliveryOutcome` with normative `FAILED_SAFE` vs `DELIVERY_UNKNOWN` semantics
+- `RouteStatus`: unknown / fresh / stale / invalid
+- `HermesCompatibilityReport` contract
+- HLB-003.5 canonical representation boundary reused for reliability serialization
+- LR-M4 / Concern authority explicitly excluded
+
+Next: **HLB-004.2 — Durable Operation Store**.
