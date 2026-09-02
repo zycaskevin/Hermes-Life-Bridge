@@ -44,6 +44,8 @@ class BridgeConfig:
     hermes_cli_path: str = "hermes"
     route_path: str = ""
     operation_db: str = ""
+    compatibility_path: str = ""
+    compatibility_evidence_path: str = ""
 
     @classmethod
     def from_env(cls) -> "BridgeConfig":
@@ -88,4 +90,6 @@ class BridgeConfig:
             hermes_cli_path=get("HLB_HERMES_CLI", default="hermes"),
             route_path=get("HLB_ROUTE_PATH", default=str(state_home / "hermes-life-bridge" / "last_route.json")),
             operation_db=get("HLB_OPERATION_DB", default=str(state_home / "hermes-life-bridge" / "operations.sqlite3")),
+            compatibility_path=get("HLB_COMPATIBILITY_PATH", default=str(state_home / "hermes-life-bridge" / "compatibility.json")),
+            compatibility_evidence_path=get("HLB_COMPATIBILITY_EVIDENCE_PATH", default=str(state_home / "hermes-life-bridge" / "compatibility-evidence.json")),
         )

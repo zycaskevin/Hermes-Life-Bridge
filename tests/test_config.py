@@ -35,3 +35,16 @@ def test_operation_db_config_default_and_override(monkeypatch, tmp_path):
     monkeypatch.setenv("HLB_OPERATION_DB", str(tmp_path / "custom-operations.db"))
     cfg = BridgeConfig.from_env()
     assert cfg.operation_db == str(tmp_path / "custom-operations.db")
+
+
+def test_compatibility_paths_follow_state_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.delenv("HLB_COMPATIBILITY_PATH", raising=False)
+    monkeypatch.delenv("HLB_COMPATIBILITY_EVIDENCE_PATH", raising=False)
+    cfg = BridgeConfig.from_env()
+    assert cfg.compatibility_path == str(
+        tmp_path / "state" / "hermes-life-bridge" / "compatibility.json"
+    )
+    assert cfg.compatibility_evidence_path == str(
+        tmp_path / "state" / "hermes-life-bridge" / "compatibility-evidence.json"
+    )

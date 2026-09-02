@@ -144,3 +144,17 @@ Next: **HLB-004.4 — Contact Delivery Reconciliation**.
 - backward-compatible redacted Contact failure trace
 
 Next: **HLB-004.5 — Hermes Compatibility Discovery**.
+
+### HLB-004.5 — Hermes Compatibility Discovery ✅ COMPLETE
+
+- observed plugin registration capability evidence
+- observed gateway hook / SessionSource evidence
+- Hermes CLI version and send capability probes
+- Hermes API health capability probe
+- privacy-minimized compatibility evidence/report files mode 0600
+- capability-based compatibility instead of hard version allowlist
+- explicit blocking issues vs warnings
+- route/platform discovery without copying exact private route
+- hermes-life compatibility CLI command
+
+Next: **HLB-004.6 — Doctor vNext**.
