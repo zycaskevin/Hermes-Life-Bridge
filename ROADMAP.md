@@ -126,3 +126,21 @@ Next: **HLB-004.3 — Retry Engine**.
 - Retry Engine performs no Hermes / Life Runtime / provider execution
 
 Next: **HLB-004.4 — Contact Delivery Reconciliation**.
+
+### HLB-004.4 — Contact Delivery Reconciliation ✅ COMPLETE
+
+- explicit FAILED_SAFE vs DELIVERY_UNKNOWN Hermes send errors
+- timeout/nonzero-after-invocation classified conservatively as unknown
+- authoritative Contact reconciliation evidence model
+- durable local DeliveryReceipt reconciliation
+- optional provider evidence probe contract
+- conflict-safe reconciliation persistence without raw payload/route
+- Contact operation store integrated into enabled delivery path
+- durable send ordering: IN_FLIGHT → provider → receipt → COMPLETED
+- crash-after-receipt recovery without duplicate send
+- unresolved unknown outcome permanently blocks blind resend
+- proven non-delivery is the only path back into bounded retry
+- startup Contact recovery and reconciliation before socket serve
+- backward-compatible redacted Contact failure trace
+
+Next: **HLB-004.5 — Hermes Compatibility Discovery**.

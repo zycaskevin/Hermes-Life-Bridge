@@ -3,11 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 import hashlib
 import json
+import re
 import sqlite3
 import threading
 
 from .contact_model import DeliveryReceipt
-from .representation import canonical_platform, canonicalize_operational_value
+from .representation import canonical_platform, canonicalize_operational_value, sanitize_operational_string
 
 
 def _target_platform(target: str) -> str:
@@ -68,6 +69,13 @@ class ContactStore:
                 idempotency_key TEXT PRIMARY KEY,
                 receipt_json TEXT NOT NULL,
                 delivered_at TEXT NOT NULL
+              );
+              CREATE TABLE IF NOT EXISTS reconciliations(
+                idempotency_key TEXT PRIMARY KEY,
+                outcome TEXT NOT NULL CHECK(outcome IN ('delivered','not_delivered')),
+                source TEXT NOT NULL,
+                provider_message_id TEXT NOT NULL DEFAULT '',
+                observed_at TEXT NOT NULL
               );
             """)
             changed = self._migrate_redact_private_targets_locked()
@@ -155,6 +163,56 @@ class ContactStore:
         data.pop("target_hash", None)
         data["duplicate"] = True
         return DeliveryReceipt(**data)
+
+    def get_reconciliation(self, idempotency_key: str):
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT outcome,source,provider_message_id,observed_at FROM reconciliations WHERE idempotency_key=?",
+                (idempotency_key,),
+            ).fetchone()
+        if not row:
+            return None
+        return dict(row)
+
+    def save_reconciliation(
+        self,
+        *,
+        idempotency_key: str,
+        outcome: str,
+        source: str,
+        provider_message_id: str = "",
+        observed_at: str | None = None,
+    ) -> None:
+        if outcome not in {"delivered", "not_delivered"}:
+            raise ValueError("invalid_contact_reconciliation_outcome")
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", source or ""):
+            raise ValueError("invalid_contact_reconciliation_source")
+        if len(provider_message_id) > 512:
+            raise ValueError("provider_message_id_too_long")
+        if sanitize_operational_string(provider_message_id) != provider_message_id:
+            raise ValueError("provider_message_id_must_be_canonical")
+        if outcome == "delivered" and not provider_message_id:
+            raise ValueError("delivered_reconciliation_requires_provider_message_id")
+        if outcome != "delivered" and provider_message_id:
+            raise ValueError("provider_message_id_only_valid_for_delivered_reconciliation")
+        from datetime import datetime, timezone
+        when = observed_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        with self._lock:
+            existing = self.conn.execute(
+                "SELECT outcome,source,provider_message_id FROM reconciliations WHERE idempotency_key=?",
+                (idempotency_key,),
+            ).fetchone()
+            if existing is not None:
+                current = (existing["outcome"], existing["source"], existing["provider_message_id"])
+                incoming = (outcome, source, provider_message_id)
+                if current != incoming:
+                    raise ValueError("contact_reconciliation_conflict")
+                return
+            self.conn.execute(
+                "INSERT INTO reconciliations(idempotency_key,outcome,source,provider_message_id,observed_at) VALUES(?,?,?,?,?)",
+                (idempotency_key, outcome, source, provider_message_id, when),
+            )
+            self.conn.commit()
 
     def save_receipt(self, receipt: DeliveryReceipt):
         safe = _redact_receipt_dict(receipt.to_dict())
