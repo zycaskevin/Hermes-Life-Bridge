@@ -36,7 +36,7 @@ def main(argv=None) -> int:
     if args.command == "trace":
         print(
             json.dumps(
-                BridgeTracer(config.trace_path).tail(args.tail),
+                BridgeTracer(config.trace_path, max_bytes=config.trace_max_bytes, backup_count=config.trace_backup_count).tail(args.tail),
                 indent=2,
                 ensure_ascii=False,
             )

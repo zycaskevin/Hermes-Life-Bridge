@@ -376,3 +376,19 @@ def test_installer_enables_percept_recovery_service():
     assert "hermes-life-percept-recovery.service" in installer
     assert "enable --now hermes-life-percept-recovery.service" in installer
     assert "is-active --quiet hermes-life-percept-recovery.service" in installer
+
+
+def test_duplicate_percept_with_regenerated_observed_at_keeps_same_logical_request(tmp_path):
+    config = percept_cfg(tmp_path)
+    runtime = FlakyRuntime()
+    executor = PerceptReliabilityExecutor(config, transport=runtime)
+    first = percept_event("hermes:gateway:telegram:observed-at-replay")
+    assert executor.submit(first).ok is True
+
+    replay = dict(first)
+    replay["observed_at"] = iso(datetime.now(timezone.utc) + timedelta(seconds=1))
+    duplicate = executor.submit(replay)
+    assert duplicate.ok is True
+    assert duplicate.duplicate is True
+    assert runtime.calls == 1
+    assert runtime.state_advances == 1

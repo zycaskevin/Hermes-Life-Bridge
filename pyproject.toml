@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-life-bridge"
-version = "0.4.0.dev0"
+version = "0.4.0"
 description = "Bidirectional bridge between Hermes Agent and Life Runtime."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,6 +19,8 @@ hermes-life = "hermes_life_bridge.cli:main"
 hermes-life-cognition = "hermes_life_bridge.cognition_cli:main"
 hermes-life-contact = "hermes_life_bridge.contact_cli:main"
 hermes-life-percept-recovery = "hermes_life_bridge.percept_recovery_service:main"
+hermes-life-maintenance = "hermes_life_bridge.maintenance:main"
+hermes-life-soak = "hermes_life_bridge.soak:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

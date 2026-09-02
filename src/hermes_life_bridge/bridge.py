@@ -14,7 +14,7 @@ from .transport import UnixSocketTransport
 class HermesLifeBridge:
     def __init__(self, config: BridgeConfig | None = None, *, transport=None):
         self.config = config or BridgeConfig.from_env()
-        self.trace = BridgeTracer(self.config.trace_path)
+        self.trace = BridgeTracer(self.config.trace_path, max_bytes=self.config.trace_max_bytes, backup_count=self.config.trace_backup_count)
         self.transport = transport or UnixSocketTransport(self.config)
         self.percepts = PerceptReliabilityExecutor(
             self.config,

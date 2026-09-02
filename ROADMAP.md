@@ -52,7 +52,7 @@
 - Doctor: HEALTHY
 - forbidden runtime representation byte counts: 0
 
-## HLB-004 — Runtime Reliability & Compatibility ⏭️ NEXT
+## HLB-004 — Runtime Reliability & Compatibility ✅ COMPLETE
 
 Goal: move from functionally proven E2E paths to a bridge that can operate continuously across process restarts, temporary dependency failures, and Hermes upgrades.
 
@@ -190,3 +190,27 @@ Next: **HLB-004.7 — Failure Injection Suite**.
 - full legacy + reliability regression suite retained
 
 Next: **HLB-004.8 — Soak, Maintenance & Release Closure**.
+
+### HLB-004.8 — Soak, Maintenance & Release Closure ✅ DEVELOPMENT COMPLETE
+
+- bounded multi-process-safe trace rotation (10 MiB + 3 backups default)
+- private trace/lock/backup files mode 0600
+- daily maintenance timer and WAL checkpoints
+- 30-day Percept/Cognition terminal reliability retention
+- Contact dedupe/reconciliation state intentionally retained
+- 5,000-event accelerated soak PASS with 500 duplicate submissions
+- Runtime calls = 5,000; Runtime state advances = 5,000
+- outbox remaining = 0
+- forbidden runtime representation = false
+- accelerated peak Python memory ≈ 6.4 MB
+- trace bytes 145,483 under 196,608 configured soak envelope
+- OperationStore compacted from 1,994,752 bytes to 32,768 bytes after accelerated retention cleanup
+- rollback-capable release installer
+- safe default external Contact delivery OFF
+- automatic Hermes Gateway restart attempt after plugin install
+- Nancy post-restart acceptance script
+- real 1h / 24h / 72h Nancy soak monitor tooling
+- package/plugin release version 0.4.0
+- wheel + source distribution build PASS
+
+**HLB-004 development is complete.** Real wall-clock 1h/24h/72h soak is a post-deployment acceptance activity because it requires Nancy's live Hermes/Life Runtime environment.

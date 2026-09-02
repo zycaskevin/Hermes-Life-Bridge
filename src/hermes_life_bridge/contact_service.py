@@ -106,7 +106,7 @@ class ContactService:
         self.config = config or BridgeConfig.from_env()
         self.sender = sender or HermesSendClient(self.config)
         self.store = ContactStore(self.config.contact_db)
-        self.trace = BridgeTracer(self.config.trace_path)
+        self.trace = BridgeTracer(self.config.trace_path, max_bytes=self.config.trace_max_bytes, backup_count=self.config.trace_backup_count)
         self.routes = RouteStore(self.config.route_path)
 
         operation_path = self.config.operation_db

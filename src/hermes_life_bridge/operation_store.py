@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timezone
 import json
 import re
 import sqlite3
@@ -247,8 +248,6 @@ class OperationStore:
                     ).fetchone()
                     if existing.state is not OperationState.COMPLETED and outbox is None:
                         raise OperationCorruptionError("percept_outbox_payload_missing")
-                    if outbox is not None and outbox["event_json"] != payload:
-                        raise OperationConflictError("percept_outbox_payload_conflict")
                     self.conn.commit()
                     return existing, False
 
@@ -653,6 +652,77 @@ class OperationStore:
             )
 
         return self._transition_transaction(operation_id, build)
+
+    @staticmethod
+    def _parse_utc(value: str) -> datetime:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except Exception as exc:
+            raise ValueError("operation_timestamp_invalid") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("operation_timestamp_must_be_timezone_aware")
+        return parsed.astimezone(timezone.utc)
+
+    def purge_terminal(
+        self,
+        *,
+        before: str,
+        limit: int = 1000,
+    ) -> int:
+        """Purge old Percept/Cognition terminal reliability rows only.
+
+        Contact operations are intentionally retained because their durable state is
+        part of the external-send duplicate-prevention boundary.
+        """
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 10000:
+            raise ValueError("operation_purge_limit_out_of_range")
+        cutoff = self._parse_utc(before)
+        with self._lock:
+            rows = self.conn.execute(
+                """
+                SELECT operation_id,updated_at FROM bridge_operations
+                WHERE kind IN ('percept','cognition')
+                  AND state IN ('completed','exhausted')
+                ORDER BY updated_at, operation_id
+                """
+            ).fetchall()
+            selected: list[str] = []
+            for row in rows:
+                try:
+                    updated = self._parse_utc(str(row["updated_at"]))
+                except ValueError:
+                    continue
+                if updated < cutoff:
+                    selected.append(str(row["operation_id"]))
+                if len(selected) >= limit:
+                    break
+            if not selected:
+                return 0
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                self.conn.executemany(
+                    "DELETE FROM bridge_operations WHERE operation_id=?",
+                    [(operation_id,) for operation_id in selected],
+                )
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+        self._secure_files()
+        return len(selected)
+
+    def compact(self) -> None:
+        with self._lock:
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self.conn.execute("VACUUM")
+            self.conn.commit()
+        self._secure_files()
+
+    def checkpoint(self) -> None:
+        with self._lock:
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self.conn.commit()
+        self._secure_files()
 
     def recover_interrupted_contact_operations(
         self, *, recovered_at: str

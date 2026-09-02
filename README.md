@@ -1,174 +1,178 @@
 # Hermes Life Bridge
 
-**Hermes ↔ Life Runtime vendor adapter.**
+**Hermes ↔ Life Runtime vendor-specific integration adapter.**
 
-Hermes Life Bridge (HLB) isolates Hermes-specific lifecycle, hook, session, route, cognition, and delivery behavior from the vendor-neutral Life Runtime.
+Hermes Life Bridge (HLB) lets Hermes act as the messaging/cognition execution surface for a vendor-neutral Life Runtime.
 
-HLB does **not** own identity, canonical memory, personality, LiveState, concerns, motivation, contact policy, or agent orchestration. Life Runtime decides **why** something matters and whether cognition/contact is permitted; HLB provides the Hermes-specific **how**.
+> Life Runtime decides **why / whether**.
+> Hermes Life Bridge handles **how**.
 
-## Milestone status
+HLB does **not** own Digital Life identity, canonical memory, personality, LiveState, Concern, Motivation, ContactDecision, or agent orchestration.
 
-| Milestone | Capability | Status |
-| --- | --- | --- |
-| HLB-001 | Hermes Gateway ingress → Life Runtime | ✅ COMPLETE |
-| HLB-002 | Life Runtime cognition task → Hermes → CognitiveReceipt | ✅ COMPLETE |
-| HLB-003 | Governed ContactIntent → Hermes delivery → DeliveryReceipt | ✅ COMPLETE |
-| HLB-004 | Runtime reliability & compatibility | ⏭️ NEXT |
+## Release status
 
-HLB-003 reached final closure in **HLB-003.5 — Canonical Representation Boundary** after real Feishu delivery and independent privacy/readback acceptance.
+**HLB v0.4.0 — Runtime Reliability & Compatibility release**
 
-## Architecture
+| Area | Status |
+| --- | --- |
+| Gateway ingress → Life Runtime | ✅ Complete |
+| Life Runtime cognition → Hermes | ✅ Complete |
+| Governed proactive Contact → Hermes provider | ✅ Complete |
+| Crash/restart recovery | ✅ Complete |
+| Bounded retry | ✅ Complete |
+| Contact unknown-delivery protection | ✅ Complete |
+| Hermes capability discovery | ✅ Complete |
+| Route freshness/invalidation | ✅ Complete |
+| Component Doctor | ✅ Complete |
+| Fault injection | ✅ Complete |
+| Accelerated soak / bounded maintenance | ✅ Complete |
+| Nancy 1h/24h/72h live soak tooling | ✅ Included; run after deployment |
+
+## Safety invariants
+
+- External proactive Contact defaults **OFF** after every install/upgrade.
+- `DELIVERY_UNKNOWN` is never blindly retried.
+- Contact retry is allowed only after authoritative evidence of non-delivery.
+- Exact private routes remain in a mode-`0600` RouteStore and never enter normal trace/Doctor output.
+- Raw user message text is not stored in the reliability outbox.
+- Runtime/Python representations such as `SessionSource(...)` / `Platform.*` are blocked from operational storage.
+- Retry is bounded per action class.
+- Runtime ACK loss replays the same idempotency key, so canonical Runtime state advances once.
+- HLB failures never become Life Runtime authority.
+
+## Reliability architecture
 
 ```text
 Hermes Gateway
-      │
-      │ HLB-001
-      ▼
-Hermes Life Bridge ───────────────► Life Runtime
-      ▲                                 │
-      │                                 │ governed cognition/contact
-      │ HLB-002 / HLB-003               │
-      └─────────────────────────────────┘
-```
-
-### HLB-001 — Gateway Ingress
-
-```text
-Hermes Gateway MessageEvent
-        ↓
-pre_gateway_dispatch
-        ↓
-normalize + correlation + dedupe
-        ↓
-Unix socket
-        ↓
-Life Runtime PerceptEvent
-        ↓
-authoritative receipt + trace
-```
-
-Capabilities:
-
-- `pre_gateway_dispatch` authoritative Gateway ingress
-- `pre_llm_call` CLI-only fallback
-- deterministic idempotency keys
-- privacy-preserving content fingerprints
-- raw user text excluded from ordinary operational trace
-- Unix-socket Life Runtime transport
-- doctor/self-test diagnostics
-- fail-open observer behavior for Hermes message handling
-
-### HLB-002 — Cognition Bridge
-
-```text
-Life Runtime CognitiveTask
-        ↓
-HLB cognition service
-        ↓
-Hermes /v1/chat/completions
-        ↓
-CognitiveReceipt
-        ↓
+    ↓
+HLB normalize + durable content-free Percept outbox
+    ↓
 Life Runtime
+
+Life Runtime CognitiveTask
+    ↓
+HLB durable bounded retry
+    ↓
+Hermes API
+    ↓
+CognitiveReceipt
+
+Life Runtime governed CONTACT
+    ↓
+HLB durable send boundary
+    ↓
+Hermes/provider
+    ↓
+DeliveryReceipt / reconciliation
 ```
 
-Properties:
-
-- local cognition Unix socket
-- task-isolated `X-Hermes-Session-Id`
-- no `X-Hermes-Session-Key` by default
-- idempotent cognition receipt cache
-- L0/L1 automatic path only; L2/L3 rejected
-- receipt bound to basis state / projection hashes
-- real GB10 Hermes cognition E2E verified
-
-### HLB-003 — Contact Bridge
+### Contact unknown outcome
 
 ```text
-Life Runtime ContactDecision(outcome=contact)
+provider invocation may have happened
         ↓
-HLB contact service
-        ↓
-Hermes one-shot delivery
-        ↓
-provider
-        ↓
-DeliveryReceipt
+DELIVERY_UNKNOWN
+   ├─ delivery proven     → COMPLETED
+   ├─ non-delivery proven → FAILED_SAFE → bounded retry
+   └─ no proof            → remain locked
 ```
 
-Properties:
+There is no automatic `DELIVERY_UNKNOWN → retry` path.
 
-- delivery defaults **OFF**
-- real Feishu provider delivery verified
-- exactly one authorized test message delivered during acceptance
-- idempotent receipt handling prevents duplicate provider sends for the same intent
-- SafeStop/contact governance remain Life Runtime authority
-- exact route stored only in private RouteStore (`0600`)
-- ordinary trace and ContactStore do not persist raw chat IDs or canonical targets
-- canonical representation boundary prevents Python/runtime repr leakage such as `SessionSource(...)` or `Platform.FEISHU`
-- historical privacy migration uses secure delete / VACUUM / WAL truncate
-- self-test cannot overwrite the production delivery route
+## Long-running operation
 
-Final HLB-003.5 acceptance: **PASS**.
+HLB v0.4.0 includes:
 
-## Why this repo is separate from Life Runtime
+- automatic Percept recovery daemon;
+- Cognition and Contact services with automatic systemd restart;
+- daily maintenance timer;
+- bounded trace rotation (10 MiB × current + 3 backups by default);
+- 30-day Percept/Cognition terminal reliability retention;
+- Contact dedupe records retained rather than automatically purged;
+- component-level compatibility and health diagnostics.
 
-Life Runtime must remain vendor-neutral. Hermes-specific concerns belong here, including:
+## Install on Nancy / GB10
 
-- Hermes hook contracts and version compatibility
-- Gateway `SessionSource` normalization
-- provider/channel addressing
-- Hermes session correlation
-- Hermes API transport
-- `hermes send` delivery behavior
-- adapter-specific retry/idempotency diagnostics
-
-A future OpenClaw or other cognition runtime should use its own bridge while the Life Runtime contracts remain unchanged.
-
-## Install as a Hermes plugin
-
-Install/copy this repository into Hermes' plugin directory using the plugin workflow supported by the deployed Hermes version. The repository-level `__init__.py` is the plugin entry point.
-
-Key configuration examples:
+From a checkout of this repository:
 
 ```bash
-export LIFE_RUNTIME_SOCKET="${XDG_RUNTIME_DIR}/nancy-live-runtime.sock"
-export LIFE_RUNTIME_LIFE_DID="did:example:life"
-export HLB_TRACE_PATH="${XDG_STATE_HOME:-$HOME/.local/state}/hermes-life-bridge/trace.jsonl"
+bash scripts/install_on_hermes.sh
 ```
 
-Contact delivery is intentionally disabled by default and should only be enabled through the governed deployment/E2E procedure.
+The installer:
+
+1. verifies Life Runtime is available;
+2. backs up the previous HLB plugin/config/systemd units;
+3. stops HLB workers before replacing files;
+4. installs v0.4.0 in an isolated venv;
+5. removes the old competing `nancy-live-runtime` plugin from active discovery;
+6. installs/starts Cognition, Contact, Percept recovery, and maintenance services;
+7. resets external Contact delivery to **OFF**;
+8. runs self-test and an accelerated soak gate;
+9. attempts `hermes gateway restart` so the new plugin hooks load;
+10. automatically rolls back if installation fails before completion.
+
+After the Gateway restart, send Nancy one normal message, then run:
+
+```bash
+~/.hermes/plugins/hermes-life-bridge/scripts/accept_on_nancy.sh
+```
+
+If Hermes uses a non-default home, use the plugin path printed by the installer.
+
+A successful acceptance prints:
+
+```text
+NANCY_ACCEPTANCE=PASS
+```
 
 ## Diagnose
 
 ```bash
+hermes-life compatibility
 hermes-life doctor
 hermes-life trace --tail 20
 ```
 
-A healthy Gateway ingress should show stages such as:
+Doctor reports these separately:
 
 ```text
-HOOK_RECEIVED
-NORMALIZED
-DEDUPE_CHECK
-SOCKET_CONNECT
-EVENT_SENT
-RUNTIME_ACK
-STATE_ADVANCED
+Ingress
+Cognition
+Contact
+Privacy
+Compatibility
 ```
 
-## Next milestone — HLB-004
+with `healthy`, `degraded`, or `blocked`, plus an overall `HEALTHY / DEGRADED / BLOCKED` result.
 
-HLB-004 will harden the bridge for long-running operation:
+## Live soak after deployment
 
-- restart/reconnect behavior
-- bounded retry and failure classification
-- cognition timeout/recovery
-- ambiguous contact-send timeout without duplicate external delivery
-- Hermes hook/API compatibility detection
-- route invalidation/relearning
-- service recovery
-- 24h / 72h soak testing
+The real wall-clock soak must run on Nancy because it depends on Nancy's actual Hermes, Life Runtime, sockets, services, routes, and operational load.
 
-See [ROADMAP.md](ROADMAP.md).
+```bash
+# First deployment check
+scripts/soak_hlb004.sh 1
+
+# Extended acceptance
+scripts/soak_hlb004.sh 24
+scripts/soak_hlb004.sh 72
+```
+
+These monitors do not enable proactive Contact; they periodically record Doctor/component state and operational file growth.
+
+## Development acceptance
+
+The v0.4.0 release candidate passed:
+
+- full automated HLB regression/failure suite;
+- Pyright on changed reliability modules;
+- shell syntax validation for install/acceptance/soak scripts;
+- 5,000-event accelerated soak with 500 duplicate submissions;
+- v0.4.0 wheel + source-distribution build;
+- one Runtime state advance per unique Percept;
+- zero residual Percept outbox rows;
+- no forbidden runtime representation;
+- bounded trace growth and operation DB compaction.
+
+See `ROADMAP.md` and `docs/HLB-004.*` for the detailed contracts and evidence.

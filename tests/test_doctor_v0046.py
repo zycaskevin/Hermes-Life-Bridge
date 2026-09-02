@@ -217,3 +217,14 @@ def test_privacy_forbidden_repr_blocks_doctor(monkeypatch, tmp_path):
     report = run_doctor(config, compatibility_discovery=Discovery(compatibility()))
     assert report["privacy"]["representation_boundary"] == "FAIL"
     assert report["components"]["privacy"]["status"] == "blocked"
+
+
+def test_privacy_scans_rotated_trace_files(monkeypatch, tmp_path):
+    healthy_probes(monkeypatch)
+    config = cfg(tmp_path)
+    rotated = Path(f"{config.trace_path}.1")
+    rotated.write_bytes(b"SessionSource(platform=Platform.FEISHU)")
+    rotated.chmod(0o600)
+    report = run_doctor(config, compatibility_discovery=Discovery(compatibility()))
+    assert report["privacy"]["representation_boundary"] == "FAIL"
+    assert report["components"]["privacy"]["status"] == "blocked"

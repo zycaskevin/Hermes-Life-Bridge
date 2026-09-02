@@ -57,3 +57,25 @@ def test_route_max_age_default_and_override(monkeypatch, tmp_path):
     assert cfg.route_max_age_seconds == 604800.0
     monkeypatch.setenv("HLB_ROUTE_MAX_AGE_SECONDS", "3600")
     assert BridgeConfig.from_env().route_max_age_seconds == 3600.0
+
+
+def test_maintenance_config_defaults_and_overrides(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    for name in (
+        "HLB_TRACE_MAX_BYTES",
+        "HLB_TRACE_BACKUP_COUNT",
+        "HLB_OPERATION_RETENTION_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    cfg = BridgeConfig.from_env()
+    assert cfg.trace_max_bytes == 10485760
+    assert cfg.trace_backup_count == 3
+    assert cfg.operation_retention_seconds == 2592000.0
+
+    monkeypatch.setenv("HLB_TRACE_MAX_BYTES", "2097152")
+    monkeypatch.setenv("HLB_TRACE_BACKUP_COUNT", "5")
+    monkeypatch.setenv("HLB_OPERATION_RETENTION_SECONDS", "86400")
+    cfg = BridgeConfig.from_env()
+    assert cfg.trace_max_bytes == 2097152
+    assert cfg.trace_backup_count == 5
+    assert cfg.operation_retention_seconds == 86400.0

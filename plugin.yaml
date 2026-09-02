@@ -1,3 +1,3 @@
 name: hermes-life-bridge
-version: "0.1.1-dev"
-description: Bridge Hermes Gateway/CLI events to Life Runtime with diagnostics and idempotency.
+version: "0.4.0"
+description: Reliable Hermes adapter for Life Runtime ingress, cognition, governed contact, recovery, compatibility, and diagnostics.

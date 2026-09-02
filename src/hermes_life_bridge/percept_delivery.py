@@ -20,7 +20,11 @@ def _now() -> str:
 
 
 def _request_hash(event: dict[str, Any]) -> str:
-    raw = json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    # observed_at is transport metadata and may be regenerated when Hermes replays
+    # the same authoritative message. It must not turn an idempotent replay into a
+    # different logical request.
+    semantic = {k: v for k, v in event.items() if k != "observed_at"}
+    raw = json.dumps(semantic, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

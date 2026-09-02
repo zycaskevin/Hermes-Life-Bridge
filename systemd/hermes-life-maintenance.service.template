@@ -1,0 +1,12 @@
+[Unit]
+Description=Hermes Life Bridge Maintenance
+After=default.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@PLUGIN_DIR@
+EnvironmentFile=-%h/.config/hermes-life-bridge.env
+Environment=PYTHONPATH=@PLUGIN_DIR@/src
+ExecStart=@PLUGIN_DIR@/.venv/bin/python -m hermes_life_bridge.maintenance
+NoNewPrivileges=true
+PrivateTmp=true

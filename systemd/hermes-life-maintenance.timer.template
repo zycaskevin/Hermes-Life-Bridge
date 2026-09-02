@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Hermes Life Bridge maintenance daily
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=24h
+Persistent=true
+Unit=hermes-life-maintenance.service
+
+[Install]
+WantedBy=timers.target

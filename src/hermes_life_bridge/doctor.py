@@ -111,7 +111,7 @@ def run_doctor(
     compatibility_discovery: CompatibilityDiscovery | None = None,
 ) -> dict[str, Any]:
     config = config or BridgeConfig.from_env()
-    tracer = BridgeTracer(config.trace_path)
+    tracer = BridgeTracer(config.trace_path, max_bytes=config.trace_max_bytes, backup_count=config.trace_backup_count)
 
     runtime_socket = _probe_unix(config.runtime_socket, config.connect_timeout_seconds)
     cognition_socket = _probe_unix(config.cognition_socket, config.connect_timeout_seconds)
@@ -159,8 +159,12 @@ def run_doctor(
     }
 
     operation_counts = _sqlite_counts(config.operation_db)
+    trace_paths = [config.trace_path] + [
+        f"{config.trace_path}.{index}"
+        for index in range(1, config.trace_backup_count + 1)
+    ]
     privacy_scan = _forbidden_repr_scan(
-        [config.operation_db, config.contact_db, config.trace_path]
+        [config.operation_db, config.contact_db, *trace_paths]
     )
     private_modes = {
         "route_store": _mode(config.route_path),
@@ -168,6 +172,12 @@ def run_doctor(
         "contact_db": _mode(config.contact_db),
         "compatibility": _mode(config.compatibility_path),
         "compatibility_evidence": _mode(config.compatibility_evidence_path),
+        "trace": _mode(config.trace_path),
+        "trace_lock": _mode(f"{config.trace_path}.lock"),
+        **{
+            f"trace_backup_{index}": _mode(f"{config.trace_path}.{index}")
+            for index in range(1, config.trace_backup_count + 1)
+        },
     }
     bad_modes = {
         name: mode

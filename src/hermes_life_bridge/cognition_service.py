@@ -43,7 +43,7 @@ class CognitionService:
     ):
         self.config = config or BridgeConfig.from_env()
         self.api = api_client or HermesApiClient(self.config)
-        self.trace = BridgeTracer(self.config.trace_path)
+        self.trace = BridgeTracer(self.config.trace_path, max_bytes=self.config.trace_max_bytes, backup_count=self.config.trace_backup_count)
         self.store = CognitionStore(self.config.cognition_db)
         operation_path = self.config.operation_db or str(
             Path(self.config.cognition_db or self.config.trace_path).with_name(
