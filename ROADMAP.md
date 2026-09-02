@@ -158,3 +158,19 @@ Next: **HLB-004.5 — Hermes Compatibility Discovery**.
 - hermes-life compatibility CLI command
 
 Next: **HLB-004.6 — Doctor vNext**.
+
+### HLB-004.6 — Doctor vNext & Route Lifecycle ✅ COMPLETE
+
+- component health: Ingress / Cognition / Contact / Privacy / Compatibility
+- human-readable healthy / degraded / blocked messages
+- overall HEALTHY / DEGRADED / BLOCKED
+- unresolved delivery_unknown surfaced as Contact blocker
+- route lifecycle: unknown / fresh / stale / invalid
+- 7-day default learned-route freshness policy
+- stale/invalid learned route blocks Contact instead of silent fallback
+- explicit route invalidation and relearning
+- resolved route hash bound into Contact idempotency
+- operational representation/privacy mode checks
+- Doctor never echoes exact private route
+
+Next: **HLB-004.7 — Failure Injection Suite**.

@@ -24,7 +24,8 @@ from .contact_reconciliation import (
 from .contact_store import ContactStore
 from .correlation import stable_id
 from .operation_store import OperationStateConflict, OperationStore
-from .reliability_contract import BridgeOperation, DeliveryOutcome, OperationState, RetryClass
+from .routing import RouteStore, route_status
+from .reliability_contract import BridgeOperation, DeliveryOutcome, OperationState, RetryClass, RouteStatus
 from .retry_engine import RetryDisposition, RetryEngine
 from .trace import BridgeTracer
 from .representation import canonical_platform
@@ -46,11 +47,15 @@ def _error_fingerprint(exc: Exception) -> str:
     return hashlib.sha256(str(exc).encode("utf-8")).hexdigest()[:16]
 
 
-def _request_hash(intent: ContactIntentEnvelope, decision: ContactDecisionEnvelope) -> str:
+def _request_hash(intent: ContactIntentEnvelope, decision: ContactDecisionEnvelope, execution_target: str | None = None) -> str:
     scrub = {k: v for k, v in intent.to_dict().items() if k != "message_text"}
     return hashlib.sha256(
         json.dumps(
-            {"intent": scrub, "decision": decision.to_dict()},
+            {
+                "intent": scrub,
+                "decision": decision.to_dict(),
+                "execution_target_hash": hashlib.sha256((execution_target or intent.target).encode()).hexdigest(),
+            },
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -77,6 +82,10 @@ class ContactDeliveryExhausted(ContactReliabilityError):
     code = "contact_delivery_exhausted"
 
 
+class ContactRouteUnavailable(ContactReliabilityError):
+    code = "contact_route_unavailable"
+
+
 class ContactOperationInFlight(ContactReliabilityError):
     code = "contact_operation_in_flight"
 
@@ -98,6 +107,7 @@ class ContactService:
         self.sender = sender or HermesSendClient(self.config)
         self.store = ContactStore(self.config.contact_db)
         self.trace = BridgeTracer(self.config.trace_path)
+        self.routes = RouteStore(self.config.route_path)
 
         operation_path = self.config.operation_db
         if not operation_path:
@@ -135,8 +145,35 @@ class ContactService:
             raise ValueError("message_hash_mismatch")
         if not intent.evidence_refs:
             raise ValueError("missing_evidence")
-        if self.config.contact_target and intent.target != self.config.contact_target:
+
+    def _execution_target(self, intent: ContactIntentEnvelope) -> tuple[str, RouteStatus, str]:
+        learned = self.routes.load()
+        status = route_status(
+            learned,
+            max_age_seconds=self.config.route_max_age_seconds,
+        )
+        if status is RouteStatus.FRESH:
+            target = str((learned or {}).get("target") or "")
+            source = "learned"
+        elif status in (RouteStatus.STALE, RouteStatus.INVALID):
+            raise ContactRouteUnavailable(f"contact_route_{status.value}")
+        else:
+            target = self.config.contact_target or intent.target
+            source = "configured" if self.config.contact_target else "intent"
+
+        if not target or target == "auto":
+            raise ContactRouteUnavailable("contact_route_unknown")
+        requested = str(intent.target or "").strip()
+        target_platform = _target_platform(target)
+        if requested not in {"", "auto", target, target_platform}:
             raise ValueError("target_not_allowlisted")
+        if self.config.contact_target:
+            configured = self.config.contact_target
+            configured_platform = _target_platform(configured)
+            # A learned exact route may refine a configured platform-only allowlist.
+            if target not in {configured} and _target_platform(target) != configured_platform:
+                raise ValueError("target_not_allowlisted")
+        return target, status, source
 
     def _initial_operation(
         self,
@@ -165,6 +202,7 @@ class ContactService:
         intent: ContactIntentEnvelope,
         evidence: ContactEvidence,
         *,
+        target: str,
         duplicate: bool = False,
     ) -> DeliveryReceipt:
         if evidence.outcome is not ContactEvidenceOutcome.DELIVERED:
@@ -179,7 +217,7 @@ class ContactService:
             intent_id=intent.intent_id,
             idempotency_key=intent.idempotency_key,
             life_did=intent.life_did,
-            target=intent.target,
+            target=target,
             status="delivered",
             message_hash=intent.message_hash,
             provider_message_id=evidence.provider_message_id,
@@ -204,10 +242,11 @@ class ContactService:
         intent: ContactIntentEnvelope,
         *,
         now: str,
+        target: str,
     ) -> DeliveryReceipt:
         result = self.reconciler.reconcile(operation.operation_id, observed_at=now)
         if result.evidence.outcome is ContactEvidenceOutcome.DELIVERED:
-            return self._reconciled_receipt(intent, result.evidence, duplicate=True)
+            return self._reconciled_receipt(intent, result.evidence, target=target, duplicate=True)
         if result.evidence.outcome is ContactEvidenceOutcome.NOT_DELIVERED:
             self._defer_or_exhaust(result.operation, now=now)
         raise ContactDeliveryUnknown(ContactDeliveryUnknown.code)
@@ -218,6 +257,7 @@ class ContactService:
         intent: ContactIntentEnvelope,
         *,
         now: str,
+        target: str,
     ) -> DeliveryReceipt | BridgeOperation:
         if operation.state is OperationState.COMPLETED:
             stored = self.store.get_reconciliation(operation.idempotency_key)
@@ -227,13 +267,13 @@ class ContactService:
                     stored["source"],
                     stored["provider_message_id"],
                 )
-                return self._reconciled_receipt(intent, evidence, duplicate=True)
+                return self._reconciled_receipt(intent, evidence, target=target, duplicate=True)
             raise ContactCompletedReceiptUnavailable(
                 ContactCompletedReceiptUnavailable.code
             )
 
         if operation.state is OperationState.DELIVERY_UNKNOWN:
-            return self._handle_unknown(operation, intent, now=now)
+            return self._handle_unknown(operation, intent, now=now, target=target)
 
         if operation.state is OperationState.IN_FLIGHT:
             raise ContactOperationInFlight(ContactOperationInFlight.code)
@@ -262,16 +302,19 @@ class ContactService:
         decision: ContactDecisionEnvelope,
     ) -> DeliveryReceipt:
         trace_id = stable_id("contact-trace", intent.intent_id)
-        target_platform = _target_platform(intent.target)
+        execution_target, learned_route_status, route_source = self._execution_target(intent)
+        target_platform = _target_platform(execution_target)
         self.trace.emit(
             trace_id=trace_id,
             stage="CONTACT_REQUEST_RECEIVED",
             intent_id=intent.intent_id,
             target_platform=target_platform,
             target_redacted=True,
+            route_status=learned_route_status.value,
+            route_source=route_source,
         )
         self._validate(intent, decision)
-        request_hash = _request_hash(intent, decision)
+        request_hash = _request_hash(intent, decision, execution_target)
 
         cached = self.store.get_receipt(intent.idempotency_key)
         if cached:
@@ -283,14 +326,14 @@ class ContactService:
                 target_platform=target_platform,
                 target_redacted=True,
             )
-            return replace(cached, target=intent.target, duplicate=True)
+            return replace(cached, target=execution_target, duplicate=True)
 
         self.store.reserve(
             idempotency_key=intent.idempotency_key,
             request_hash=request_hash,
             metadata={
                 "intent_id": intent.intent_id,
-                "target": intent.target,
+                "target": execution_target,
                 "message_hash": intent.message_hash,
             },
             created_at=intent.created_at,
@@ -302,7 +345,7 @@ class ContactService:
                 intent_id=intent.intent_id,
                 idempotency_key=intent.idempotency_key,
                 life_did=intent.life_did,
-                target=intent.target,
+                target=execution_target,
                 status="dry_run",
                 message_hash=intent.message_hash,
                 provider_message_id="",
@@ -321,7 +364,7 @@ class ContactService:
         operation, _created = self.operations.reserve(
             self._initial_operation(intent, request_hash, now)
         )
-        prepared = self._prepare_existing(operation, intent, now=now)
+        prepared = self._prepare_existing(operation, intent, now=now, target=execution_target)
         if isinstance(prepared, DeliveryReceipt):
             return prepared
 
@@ -338,7 +381,7 @@ class ContactService:
 
         try:
             provider_id = self.sender.send(
-                target=intent.target,
+                target=execution_target,
                 message=intent.message_text,
             )
         except HermesSendFailedSafe as exc:
@@ -396,7 +439,7 @@ class ContactService:
                 target_platform=target_platform,
                 target_redacted=True,
             )
-            return self._handle_unknown(unknown, intent, now=_now())
+            return self._handle_unknown(unknown, intent, now=_now(), target=execution_target)
         except Exception as exc:
             # Custom/future sender exceptions are conservative: after begin_attempt,
             # HLB cannot prove that an external side effect did not occur.
@@ -427,7 +470,7 @@ class ContactService:
                 target_platform=target_platform,
                 target_redacted=True,
             )
-            return self._handle_unknown(unknown, intent, now=_now())
+            return self._handle_unknown(unknown, intent, now=_now(), target=execution_target)
 
         receipt = DeliveryReceipt(
             receipt_id=stable_id(
@@ -439,7 +482,7 @@ class ContactService:
             intent_id=intent.intent_id,
             idempotency_key=intent.idempotency_key,
             life_did=intent.life_did,
-            target=intent.target,
+            target=execution_target,
             status="delivered",
             message_hash=intent.message_hash,
             provider_message_id=provider_id,

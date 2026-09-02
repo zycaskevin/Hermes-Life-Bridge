@@ -25,6 +25,7 @@ from hermes_life_bridge.contact_reconciliation import (
     ContactReconciler,
 )
 from hermes_life_bridge.contact_service import (
+    _request_hash,
     ContactDeliveryUnknown,
     ContactRetryDeferred,
     ContactService,
@@ -295,16 +296,7 @@ def test_startup_crash_after_receipt_persist_resolves_without_resend(tmp_path):
 
     # Simulate: durable IN_FLIGHT -> provider success -> ContactStore receipt commit
     # -> process crashes before OperationStore COMPLETED commit.
-    request_hash = hashlib.sha256(
-        json.dumps(
-            {
-                "intent": {k: v for k, v in intent.to_dict().items() if k != "message_text"},
-                "decision": decision.to_dict(),
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()
+    request_hash = _request_hash(intent, decision, intent.target)
     operation_id = stable_id("contact-operation", intent.idempotency_key, request_hash)
     operation_store.reserve(
         BridgeOperation(

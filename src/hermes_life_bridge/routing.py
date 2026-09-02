@@ -100,7 +100,22 @@ class RouteStore:
             "message_id": route.message_id,
             "target": route.target,
             "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "valid": True,
         }
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        tmp.write_text(json.dumps(data, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        tmp.replace(self.path)
+        os.chmod(self.path, 0o600)
+
+    def invalidate(self) -> None:
+        if self.path is None or not self.path.exists():
+            return
+        data = self.load()
+        if not isinstance(data, dict):
+            return
+        data["valid"] = False
+        data["invalidated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
         tmp.write_text(json.dumps(data, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
         os.chmod(tmp, 0o600)
@@ -115,3 +130,50 @@ class RouteStore:
         except Exception:
             return None
         return data if isinstance(data, dict) else None
+
+
+def route_status(
+    data: dict[str, Any] | None,
+    *,
+    max_age_seconds: float,
+    now: datetime | None = None,
+):
+    """Classify a private learned route without exposing its exact target."""
+    from .reliability_contract import RouteStatus
+
+    if data is None:
+        return RouteStatus.UNKNOWN
+    if not isinstance(data, dict):
+        return RouteStatus.INVALID
+    if data.get("valid") is False or data.get("invalidated_at"):
+        return RouteStatus.INVALID
+    platform = _enum_value(data.get("platform")).strip().lower()
+    chat_id = str(data.get("chat_id") or "").strip()
+    target = str(data.get("target") or "").strip()
+    if (
+        not platform
+        or platform in NON_DELIVERY_PLATFORMS
+        or not chat_id
+        or not target
+        or not target.startswith(f"{platform}:")
+    ):
+        return RouteStatus.INVALID
+    if max_age_seconds <= 0:
+        return RouteStatus.STALE
+    updated_at = str(data.get("updated_at") or "").strip()
+    if not updated_at:
+        return RouteStatus.STALE
+    try:
+        parsed = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return RouteStatus.STALE
+        parsed = parsed.astimezone(timezone.utc)
+    except Exception:
+        return RouteStatus.STALE
+    reference = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    age = (reference - parsed).total_seconds()
+    if age < -300:
+        return RouteStatus.INVALID
+    if age > max_age_seconds:
+        return RouteStatus.STALE
+    return RouteStatus.FRESH

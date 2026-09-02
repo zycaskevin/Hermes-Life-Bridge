@@ -17,3 +17,8 @@ def test_installer_publishes_compatibility_paths():
     installer = Path("scripts/install_on_hermes.sh").read_text()
     assert "HLB_COMPATIBILITY_PATH=$STATE_HOME/hermes-life-bridge/compatibility.json" in installer
     assert "HLB_COMPATIBILITY_EVIDENCE_PATH=$STATE_HOME/hermes-life-bridge/compatibility-evidence.json" in installer
+
+
+def test_installer_sets_route_freshness_policy():
+    installer = Path("scripts/install_on_hermes.sh").read_text()
+    assert "HLB_ROUTE_MAX_AGE_SECONDS=604800" in installer

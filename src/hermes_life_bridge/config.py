@@ -46,6 +46,7 @@ class BridgeConfig:
     operation_db: str = ""
     compatibility_path: str = ""
     compatibility_evidence_path: str = ""
+    route_max_age_seconds: float = 604800.0
 
     @classmethod
     def from_env(cls) -> "BridgeConfig":
@@ -92,4 +93,5 @@ class BridgeConfig:
             operation_db=get("HLB_OPERATION_DB", default=str(state_home / "hermes-life-bridge" / "operations.sqlite3")),
             compatibility_path=get("HLB_COMPATIBILITY_PATH", default=str(state_home / "hermes-life-bridge" / "compatibility.json")),
             compatibility_evidence_path=get("HLB_COMPATIBILITY_EVIDENCE_PATH", default=str(state_home / "hermes-life-bridge" / "compatibility-evidence.json")),
+            route_max_age_seconds=float(get("HLB_ROUTE_MAX_AGE_SECONDS", default="604800")),
         )

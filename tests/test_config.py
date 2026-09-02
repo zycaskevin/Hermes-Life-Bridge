@@ -48,3 +48,12 @@ def test_compatibility_paths_follow_state_home(monkeypatch, tmp_path):
     assert cfg.compatibility_evidence_path == str(
         tmp_path / "state" / "hermes-life-bridge" / "compatibility-evidence.json"
     )
+
+
+def test_route_max_age_default_and_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.delenv("HLB_ROUTE_MAX_AGE_SECONDS", raising=False)
+    cfg = BridgeConfig.from_env()
+    assert cfg.route_max_age_seconds == 604800.0
+    monkeypatch.setenv("HLB_ROUTE_MAX_AGE_SECONDS", "3600")
+    assert BridgeConfig.from_env().route_max_age_seconds == 3600.0
