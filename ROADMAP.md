@@ -105,3 +105,24 @@ Next: **HLB-004.2 — Durable Operation Store**.
 - `HLB_OPERATION_DB` configuration/default installer path
 
 Next: **HLB-004.3 — Retry Engine**.
+
+### HLB-004.3 — Retry Engine ✅ COMPLETE
+
+- separate Percept / Cognition / Contact retry policies
+- total attempts bounded at 5 / 3 / 2 respectively
+- deterministic bounded exponential backoff + jitter
+- durable `FAILED_SAFE → RETRY_WAIT` scheduling
+- stranded `FAILED_SAFE` restart sweep
+- bounded due-operation selection
+- due release returns to `PREPARED` without executing
+- concurrent scheduler double-release protection
+- durable `begin_attempt()` boundary increments attempt only when starting
+- Percept interrupted `in_flight` replay-safe recovery
+- Cognition interrupted recovery requires accepted-receipt reconciliation
+- Cognition reconciliation before schedule, due release, and retry start
+- late CognitiveReceipt cancels pending retry and completes operation
+- Cognition-only compatibility amendment for late completion from retry states
+- Contact `DELIVERY_UNKNOWN` remains outside retry path
+- Retry Engine performs no Hermes / Life Runtime / provider execution
+
+Next: **HLB-004.4 — Contact Delivery Reconciliation**.

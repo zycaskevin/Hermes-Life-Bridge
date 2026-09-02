@@ -8,6 +8,7 @@ from hermes_life_bridge.reliability_contract import (
     OperationState,
     RetryClass,
     RetryPolicy,
+    is_operation_transition_allowed,
     RouteStatus,
 )
 
@@ -178,3 +179,90 @@ def test_compatibility_report_serialization_is_canonical():
     data = report.to_dict()
     assert data["platforms"] == ["feishu", "telegram"]
     assert data["supported"] is True
+
+
+def test_retry_graph_supports_cognition_only_late_completion_without_unknown_retry():
+    base = _operation(
+        kind=RetryClass.COGNITION,
+        state=OperationState.RETRY_WAIT,
+        attempt=1,
+        delivery_outcome=None,
+        next_attempt_at="2026-09-02T00:00:10Z",
+    )
+    completed = BridgeOperation(
+        operation_id=base.operation_id,
+        kind=base.kind,
+        idempotency_key=base.idempotency_key,
+        request_hash=base.request_hash,
+        state=OperationState.COMPLETED,
+        attempt=base.attempt,
+        created_at=base.created_at,
+        updated_at="2026-09-02T00:00:11Z",
+    )
+    assert is_operation_transition_allowed(base, completed) is True
+
+    contact = _operation(
+        state=OperationState.RETRY_WAIT,
+        attempt=1,
+        delivery_outcome=DeliveryOutcome.FAILED_SAFE,
+        next_attempt_at="2026-09-02T00:00:10Z",
+    )
+    contact_completed = BridgeOperation(
+        operation_id=contact.operation_id,
+        kind=contact.kind,
+        idempotency_key=contact.idempotency_key,
+        request_hash=contact.request_hash,
+        state=OperationState.COMPLETED,
+        attempt=contact.attempt,
+        created_at=contact.created_at,
+        updated_at="2026-09-02T00:00:11Z",
+        delivery_outcome=DeliveryOutcome.DELIVERED,
+    )
+    assert is_operation_transition_allowed(contact, contact_completed) is False
+    assert OperationState.RETRY_WAIT not in ALLOWED_OPERATION_TRANSITIONS[
+        OperationState.DELIVERY_UNKNOWN
+    ]
+
+
+def test_transition_guard_rejects_identity_or_attempt_mutation():
+    prepared = _operation(
+        kind=RetryClass.PERCEPT,
+        state=OperationState.PREPARED,
+        attempt=0,
+        delivery_outcome=None,
+    )
+    valid_started = BridgeOperation(
+        operation_id=prepared.operation_id,
+        kind=prepared.kind,
+        idempotency_key=prepared.idempotency_key,
+        request_hash=prepared.request_hash,
+        state=OperationState.IN_FLIGHT,
+        attempt=1,
+        created_at=prepared.created_at,
+        updated_at="2026-09-02T00:00:01Z",
+    )
+    assert is_operation_transition_allowed(prepared, valid_started) is True
+
+    wrong_attempt = BridgeOperation(
+        operation_id=prepared.operation_id,
+        kind=prepared.kind,
+        idempotency_key=prepared.idempotency_key,
+        request_hash=prepared.request_hash,
+        state=OperationState.IN_FLIGHT,
+        attempt=2,
+        created_at=prepared.created_at,
+        updated_at="2026-09-02T00:00:01Z",
+    )
+    assert is_operation_transition_allowed(prepared, wrong_attempt) is False
+
+    wrong_request = BridgeOperation(
+        operation_id=prepared.operation_id,
+        kind=prepared.kind,
+        idempotency_key=prepared.idempotency_key,
+        request_hash="b" * 64,
+        state=OperationState.IN_FLIGHT,
+        attempt=1,
+        created_at=prepared.created_at,
+        updated_at="2026-09-02T00:00:01Z",
+    )
+    assert is_operation_transition_allowed(prepared, wrong_request) is False

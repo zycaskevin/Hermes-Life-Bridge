@@ -225,6 +225,49 @@ class BridgeOperation:
         return canonicalize_operational_value(asdict(self))
 
 
+LATE_COGNITION_COMPLETION_STATES = frozenset(
+    {
+        OperationState.PREPARED,
+        OperationState.FAILED_SAFE,
+        OperationState.RETRY_WAIT,
+    }
+)
+
+
+def is_operation_transition_allowed(
+    current: BridgeOperation,
+    candidate: BridgeOperation,
+) -> bool:
+    """Class-aware transition guard for durable reliability state."""
+    if current.operation_id != candidate.operation_id:
+        return False
+    if current.kind is not candidate.kind:
+        return False
+    if current.idempotency_key != candidate.idempotency_key:
+        return False
+    if current.request_hash != candidate.request_hash:
+        return False
+    if current.created_at != candidate.created_at:
+        return False
+    if current.schema_version != candidate.schema_version:
+        return False
+
+    if current.state is OperationState.PREPARED and candidate.state is OperationState.IN_FLIGHT:
+        if candidate.attempt != current.attempt + 1:
+            return False
+    elif candidate.attempt != current.attempt:
+        return False
+
+    if candidate.state in ALLOWED_OPERATION_TRANSITIONS[current.state]:
+        return True
+    return (
+        current.kind is RetryClass.COGNITION
+        and current.attempt >= 1
+        and current.state in LATE_COGNITION_COMPLETION_STATES
+        and candidate.state is OperationState.COMPLETED
+    )
+
+
 @dataclass(frozen=True)
 class HermesCompatibilityReport:
     """Startup discovery result for Hermes capabilities consumed by HLB."""

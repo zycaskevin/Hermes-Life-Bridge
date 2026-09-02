@@ -6,11 +6,11 @@ import sqlite3
 import threading
 
 from .reliability_contract import (
-    ALLOWED_OPERATION_TRANSITIONS,
     BridgeOperation,
     DeliveryOutcome,
     OperationState,
     RetryClass,
+    is_operation_transition_allowed,
 )
 
 
@@ -278,7 +278,7 @@ class OperationStore:
         current: BridgeOperation,
         candidate: BridgeOperation,
     ) -> BridgeOperation:
-        if candidate.state not in ALLOWED_OPERATION_TRANSITIONS[current.state]:
+        if not is_operation_transition_allowed(current, candidate):
             raise OperationStateConflict(
                 f"transition_not_allowed:{current.state.value}:{candidate.state.value}"
             )
@@ -357,12 +357,21 @@ class OperationStore:
 
     def mark_completed(self, operation_id: str, *, updated_at: str) -> BridgeOperation:
         def build(current: BridgeOperation) -> BridgeOperation:
-            if current.state not in (
+            if current.state in (
+                OperationState.PREPARED,
+                OperationState.FAILED_SAFE,
+                OperationState.RETRY_WAIT,
+            ):
+                if current.kind is not RetryClass.COGNITION or current.attempt < 1:
+                    raise OperationStateConflict(
+                        "late_completion_from_retry_state_is_cognition_only"
+                    )
+            elif current.state not in (
                 OperationState.IN_FLIGHT,
                 OperationState.DELIVERY_UNKNOWN,
             ):
                 raise OperationStateConflict(
-                    "mark_completed_requires_in_flight_or_delivery_unknown"
+                    "mark_completed_requires_supported_reconciliation_state"
                 )
             return BridgeOperation(
                 operation_id=current.operation_id,
