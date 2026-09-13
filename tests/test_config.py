@@ -27,6 +27,9 @@ def test_hermes_env_fallback_for_api_key(monkeypatch, tmp_path):
 
 
 def test_operation_db_config_default_and_override(monkeypatch, tmp_path):
+    cfg_file = tmp_path / "isolated.env"
+    cfg_file.write_text("", encoding="utf-8")
+    monkeypatch.setenv("HLB_CONFIG_FILE", str(cfg_file))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.delenv("HLB_OPERATION_DB", raising=False)
     cfg = BridgeConfig.from_env()
@@ -38,6 +41,9 @@ def test_operation_db_config_default_and_override(monkeypatch, tmp_path):
 
 
 def test_compatibility_paths_follow_state_home(monkeypatch, tmp_path):
+    cfg_file = tmp_path / "isolated.env"
+    cfg_file.write_text("", encoding="utf-8")
+    monkeypatch.setenv("HLB_CONFIG_FILE", str(cfg_file))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.delenv("HLB_COMPATIBILITY_PATH", raising=False)
     monkeypatch.delenv("HLB_COMPATIBILITY_EVIDENCE_PATH", raising=False)
@@ -79,3 +85,34 @@ def test_maintenance_config_defaults_and_overrides(monkeypatch, tmp_path):
     assert cfg.trace_max_bytes == 2097152
     assert cfg.trace_backup_count == 5
     assert cfg.operation_retention_seconds == 86400.0
+
+
+def test_work_producer_config_is_disabled_by_default_and_supports_owner_private_file_path(monkeypatch, tmp_path):
+    cfg_file = tmp_path / "empty.env"
+    cfg_file.write_text("", encoding="utf-8")
+    monkeypatch.setenv("HLB_CONFIG_FILE", str(cfg_file))
+    for name in (
+        "HLB_WORK_PRODUCER_ENABLED",
+        "HLB_WORK_PRODUCER_ENDPOINT",
+        "HLB_WORK_PRODUCER_CREDENTIALS_FILE",
+        "HLB_WORK_PRODUCER_TIMEOUT_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    cfg = BridgeConfig.from_env()
+    assert cfg.work_producer_enabled is False
+    assert cfg.work_producer_endpoint == "http://127.0.0.1:8791"
+    assert cfg.work_producer_credentials_file.endswith(
+        "hermes-life-bridge-work-producer.json"
+    )
+    assert cfg.work_producer_timeout_seconds == 1.0
+
+    credentials = tmp_path / "producer.json"
+    monkeypatch.setenv("HLB_WORK_PRODUCER_ENABLED", "true")
+    monkeypatch.setenv("HLB_WORK_PRODUCER_ENDPOINT", "http://127.0.0.1:8792")
+    monkeypatch.setenv("HLB_WORK_PRODUCER_CREDENTIALS_FILE", str(credentials))
+    monkeypatch.setenv("HLB_WORK_PRODUCER_TIMEOUT_SECONDS", "0.75")
+    cfg = BridgeConfig.from_env()
+    assert cfg.work_producer_enabled is True
+    assert cfg.work_producer_endpoint == "http://127.0.0.1:8792"
+    assert cfg.work_producer_credentials_file == str(credentials)
+    assert cfg.work_producer_timeout_seconds == 0.75

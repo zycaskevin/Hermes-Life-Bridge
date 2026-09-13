@@ -84,6 +84,13 @@ class BridgeConfig:
     # syntax-valid partial implementation and any local callers of it.
     work_ledger_db: str = ""
     work_idle_seconds: float = 900.0
+    # LR-WC-006A: Hermes/Nancy -> Life Runtime production-shadow producer.
+    # Disabled by default. Raw bearer material lives only in the owner-private
+    # credentials file, never in environment/config values.
+    work_producer_enabled: bool = False
+    work_producer_endpoint: str = "http://127.0.0.1:8791"
+    work_producer_credentials_file: str = ""
+    work_producer_timeout_seconds: float = 1.0
 
     @classmethod
     def from_env(cls) -> "BridgeConfig":
@@ -162,4 +169,22 @@ class BridgeConfig:
             work_progress_idle_seconds=work_idle_seconds,
             work_ledger_db=work_ledger_db,
             work_idle_seconds=work_idle_seconds,
+            work_producer_enabled=_strict_feature_bool(
+                get("HLB_WORK_PRODUCER_ENABLED", default="false"),
+                name="HLB_WORK_PRODUCER_ENABLED",
+            ),
+            work_producer_endpoint=get(
+                "HLB_WORK_PRODUCER_ENDPOINT",
+                default="http://127.0.0.1:8791",
+            ),
+            work_producer_credentials_file=get(
+                "HLB_WORK_PRODUCER_CREDENTIALS_FILE",
+                default=str(config_home / "hermes-life-bridge-work-producer.json"),
+            ),
+            work_producer_timeout_seconds=_bounded_seconds(
+                get("HLB_WORK_PRODUCER_TIMEOUT_SECONDS", default="1.0"),
+                name="HLB_WORK_PRODUCER_TIMEOUT_SECONDS",
+                minimum=0.1,
+                maximum=10.0,
+            ),
         )
