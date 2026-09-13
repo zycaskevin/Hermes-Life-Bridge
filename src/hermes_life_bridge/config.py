@@ -1,7 +1,33 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import os
+
+
+def _strict_feature_bool(value: str, *, name: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name}_must_be_strict_boolean")
+
+
+def _bounded_seconds(
+    value: str,
+    *,
+    name: str,
+    minimum: float = 0.0,
+    maximum: float = 604800.0,
+) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name}_must_be_number") from exc
+    if not math.isfinite(parsed) or not minimum <= parsed <= maximum:
+        raise ValueError(f"{name}_out_of_range")
+    return parsed
 
 
 def _read_env_file(path: Path) -> dict[str, str]:
@@ -50,6 +76,14 @@ class BridgeConfig:
     trace_max_bytes: int = 10485760
     trace_backup_count: int = 3
     operation_retention_seconds: float = 2592000.0
+    work_progress_enabled: bool = False
+    work_progress_runtime_delivery: bool = False
+    work_projection_db: str = ""
+    work_progress_idle_seconds: float = 900.0
+    # WP-2 names. The two fields above remain compatibility aliases for the
+    # syntax-valid partial implementation and any local callers of it.
+    work_ledger_db: str = ""
+    work_idle_seconds: float = 900.0
 
     @classmethod
     def from_env(cls) -> "BridgeConfig":
@@ -73,6 +107,22 @@ class BridgeConfig:
                 if value:
                     return value
             return default
+
+        work_ledger_db = get(
+            "HLB_WORK_LEDGER_DB",
+            "HLB_WORK_PROJECTION_DB",
+            default=str(
+                state_home / "hermes-life-bridge" / "work_projection.sqlite3"
+            ),
+        )
+        work_idle_seconds = _bounded_seconds(
+            get(
+                "HLB_WORK_IDLE_SECONDS",
+                "HLB_WORK_PROGRESS_IDLE_SECONDS",
+                default="900",
+            ),
+            name="HLB_WORK_IDLE_SECONDS",
+        )
 
         return cls(
             life_did=get("LIFE_RUNTIME_LIFE_DID", "LIVE_RUNTIME_LIFE_DID", default="did:example:life"),
@@ -100,4 +150,16 @@ class BridgeConfig:
             trace_max_bytes=int(get("HLB_TRACE_MAX_BYTES", default="10485760")),
             trace_backup_count=int(get("HLB_TRACE_BACKUP_COUNT", default="3")),
             operation_retention_seconds=float(get("HLB_OPERATION_RETENTION_SECONDS", default="2592000")),
+            work_progress_enabled=_strict_feature_bool(
+                get("HLB_WORK_PROGRESS_ENABLED", default="false"),
+                name="HLB_WORK_PROGRESS_ENABLED",
+            ),
+            work_progress_runtime_delivery=_strict_feature_bool(
+                get("HLB_WORK_PROGRESS_RUNTIME_DELIVERY", default="false"),
+                name="HLB_WORK_PROGRESS_RUNTIME_DELIVERY",
+            ),
+            work_projection_db=work_ledger_db,
+            work_progress_idle_seconds=work_idle_seconds,
+            work_ledger_db=work_ledger_db,
+            work_idle_seconds=work_idle_seconds,
         )

@@ -78,6 +78,12 @@ class ContactRetryDeferred(ContactReliabilityError):
         super().__init__(self.code)
 
 
+class ContactFreshDecisionRequired(ContactReliabilityError):
+    """A failed delivery may only be retried through a new intent and decision."""
+
+    code = "fresh_decision_required"
+
+
 class ContactDeliveryExhausted(ContactReliabilityError):
     code = "contact_delivery_exhausted"
 
@@ -170,8 +176,12 @@ class ContactService:
         if self.config.contact_target:
             configured = self.config.contact_target
             configured_platform = _target_platform(configured)
-            # A learned exact route may refine a configured platform-only allowlist.
-            if target not in {configured} and _target_platform(target) != configured_platform:
+            configured_is_exact = configured != configured_platform
+            if configured_is_exact:
+                # A platform label is not an authorization for another private chat.
+                if target != configured:
+                    raise ValueError("target_not_allowlisted")
+            elif _target_platform(target) != configured_platform:
                 raise ValueError("target_not_allowlisted")
         return target, status, source
 
@@ -230,11 +240,9 @@ class ContactService:
     def _defer_or_exhaust(self, operation: BridgeOperation, *, now: str) -> NoReturn:
         if operation.state is not OperationState.FAILED_SAFE:
             raise OperationStateConflict("defer_requires_failed_safe")
-        result = self.retry.schedule_failed_safe(operation.operation_id, now=now)
-        if result.disposition is RetryDisposition.EXHAUSTED:
-            raise ContactDeliveryExhausted(ContactDeliveryExhausted.code)
-        retry_at = result.operation.next_attempt_at or ""
-        raise ContactRetryDeferred(retry_at)
+        # An old intent/decision is no longer contextually safe after failure.
+        # Preserve the durable failure, but never schedule it for autonomous resend.
+        raise ContactFreshDecisionRequired(ContactFreshDecisionRequired.code)
 
     def _handle_unknown(
         self,
@@ -285,15 +293,16 @@ class ContactService:
             self._defer_or_exhaust(operation, now=now)
 
         if operation.state is OperationState.RETRY_WAIT:
-            if not operation.next_attempt_at or _parse(operation.next_attempt_at) > _parse(now):
-                raise ContactRetryDeferred(operation.next_attempt_at or "")
-            operation = self.operations.make_retry_ready(
-                operation.operation_id,
-                updated_at=now,
-            )
+            # Legacy records may have been scheduled before WP-1. They are old
+            # failed-safe intents and must not be revived into a new send attempt.
+            raise ContactFreshDecisionRequired(ContactFreshDecisionRequired.code)
 
         if operation.state is not OperationState.PREPARED:
             raise OperationStateConflict("contact_operation_not_prepared")
+        # `attempt > 0` can only come from a legacy retry that was released before
+        # WP-1 loaded. A contact must have a new intent/decision instead.
+        if operation.attempt > 0:
+            raise ContactFreshDecisionRequired(ContactFreshDecisionRequired.code)
         return operation
 
     def process(
@@ -546,13 +555,9 @@ class ContactService:
                 elif result.evidence.outcome is ContactEvidenceOutcome.DELIVERED:
                     resolved += 1
                 else:
+                    # A reconciled non-delivery still cannot revive the historical
+                    # intent/decision. It remains FAILED_SAFE for owner review.
                     resolved += 1
-                    outcome = self.retry.schedule_failed_safe(
-                        result.operation.operation_id,
-                        now=_now(),
-                    )
-                    if outcome.disposition is RetryDisposition.SCHEDULED:
-                        retry += 1
             except Exception as exc:
                 # Fail closed. Operation remains durable and will be visible in Doctor.
                 unknown += 1

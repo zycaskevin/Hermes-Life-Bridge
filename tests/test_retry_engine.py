@@ -163,32 +163,18 @@ def test_percept_failed_safe_is_scheduled_but_not_started(tmp_path):
     store.close()
 
 
-def test_contact_allows_only_one_retry_after_first_failed_safe(tmp_path):
+def test_contact_failed_safe_requires_fresh_decision_and_never_schedules(tmp_path):
     store = _store(tmp_path)
     engine = RetryEngine(store)
     failed = _failed_safe(store, "op-contact-1", RetryClass.CONTACT)
-    first = engine.schedule_failed_safe(failed.operation_id, now=T2)
-    assert first.disposition is RetryDisposition.SCHEDULED
 
-    released = engine.release_due(now=FUTURE, kind=RetryClass.CONTACT)
-    assert [item.disposition for item in released] == [RetryDisposition.READY]
-    ready = store.get(failed.operation_id)
-    assert ready.state is OperationState.PREPARED
-    assert ready.attempt == 1
+    result = engine.schedule_failed_safe(failed.operation_id, now=T2)
 
-    store.start_attempt(failed.operation_id, updated_at="2026-09-02T04:00:01Z")
-    store.mark_failed_safe(
-        failed.operation_id,
-        updated_at="2026-09-02T04:00:02Z",
-        error_code="provider_rejected_no_send",
-    )
-    final = engine.schedule_failed_safe(
-        failed.operation_id,
-        now="2026-09-02T04:00:03Z",
-    )
-    assert final.disposition is RetryDisposition.EXHAUSTED
-    assert final.operation.state is OperationState.EXHAUSTED
-    assert final.operation.attempt == 2
+    assert CONTACT_RETRY_POLICY.retry_after_failed_safe is False
+    assert result.disposition is RetryDisposition.FRESH_DECISION_REQUIRED
+    assert result.operation.state is OperationState.FAILED_SAFE
+    assert store.get(failed.operation_id).state is OperationState.FAILED_SAFE
+    assert engine.release_due(now=FUTURE, kind=RetryClass.CONTACT) == []
     store.close()
 
 
@@ -584,9 +570,11 @@ def test_pending_failed_safe_sweep_resumes_after_scheduler_crash(tmp_path):
         percept.operation_id,
         contact.operation_id,
     }
-    assert all(item.disposition is RetryDisposition.SCHEDULED for item in results)
+    dispositions = {item.operation.operation_id: item.disposition for item in results}
+    assert dispositions[percept.operation_id] is RetryDisposition.SCHEDULED
+    assert dispositions[contact.operation_id] is RetryDisposition.FRESH_DECISION_REQUIRED
     assert reopened.get(percept.operation_id).state is OperationState.RETRY_WAIT
-    assert reopened.get(contact.operation_id).state is OperationState.RETRY_WAIT
+    assert reopened.get(contact.operation_id).state is OperationState.FAILED_SAFE
     reopened.close()
 
 

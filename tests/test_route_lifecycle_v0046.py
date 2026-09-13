@@ -180,3 +180,49 @@ def test_platform_mismatch_between_learned_route_and_allowlist_blocks(tmp_path):
     with pytest.raises(ValueError, match="target_not_allowlisted"):
         ContactService(config, sender).process(intent("auto"), decision())
     assert sender.calls == 0
+
+
+def test_exact_configured_route_rejects_same_platform_different_chat(tmp_path):
+    """E-WP1-04: platform affinity must never widen an exact chat allowlist."""
+    config = cfg(tmp_path, static_target="feishu:oc_CONFIGURED")
+    RouteStore(config.route_path).save(HermesRoute("feishu", "oc_LEARNED_OTHER"))
+    sender = Sender()
+
+    with pytest.raises(ValueError, match="target_not_allowlisted"):
+        ContactService(config, sender).process(intent("auto"), decision())
+
+    assert sender.calls == 0
+
+
+def test_exact_configured_route_accepts_identical_learned_chat(tmp_path):
+    """E-WP1-03: a learned route may be used only when it exactly matches."""
+    config = cfg(tmp_path, static_target="feishu:oc_CONFIGURED")
+    RouteStore(config.route_path).save(HermesRoute("feishu", "oc_CONFIGURED"))
+    sender = Sender()
+
+    receipt = ContactService(config, sender).process(intent("auto"), decision())
+
+    assert receipt.status == "delivered"
+    assert sender.calls == 1
+
+
+def test_exact_configured_route_rejects_whitespace_non_match(tmp_path):
+    config = cfg(tmp_path, static_target="feishu:oc_CONFIGURED ")
+    RouteStore(config.route_path).save(HermesRoute("feishu", "oc_CONFIGURED"))
+    sender = Sender()
+
+    with pytest.raises(ValueError, match="target_not_allowlisted"):
+        ContactService(config, sender).process(intent("auto"), decision())
+
+    assert sender.calls == 0
+
+
+def test_exact_configured_thread_rejects_different_thread(tmp_path):
+    config = cfg(tmp_path, static_target="feishu:oc_CONFIGURED:thread-A")
+    RouteStore(config.route_path).save(HermesRoute("feishu", "oc_CONFIGURED", "thread-B"))
+    sender = Sender()
+
+    with pytest.raises(ValueError, match="target_not_allowlisted"):
+        ContactService(config, sender).process(intent("auto"), decision())
+
+    assert sender.calls == 0

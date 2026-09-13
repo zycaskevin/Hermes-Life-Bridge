@@ -24,6 +24,7 @@ class RetryDisposition(str, Enum):
     COMPLETED = "completed"
     READY = "ready"
     STARTED = "started"
+    FRESH_DECISION_REQUIRED = "fresh_decision_required"
 
 
 @dataclass(frozen=True)
@@ -66,7 +67,7 @@ CONTACT_RETRY_POLICY = RetryPolicy(
     max_backoff_seconds=8.0,
     backoff_multiplier=2.0,
     jitter_ratio=0.20,
-    retry_after_failed_safe=True,
+    retry_after_failed_safe=False,
     retry_after_delivery_unknown=False,
     requires_durable_state=True,
     reconcile_before_retry=False,
@@ -182,6 +183,10 @@ class RetryEngine:
             raise OperationStateConflict("retry_engine_requires_failed_safe")
 
         policy = self.policy_for(operation.kind)
+        if operation.kind is RetryClass.CONTACT:
+            # Contacts are context-sensitive: retain FAILED_SAFE evidence, but
+            # never turn an old intent/decision into a retryable operation.
+            return RetryResult(RetryDisposition.FRESH_DECISION_REQUIRED, operation)
         if policy.reconcile_before_retry:
             if operation.kind is not RetryClass.COGNITION:
                 raise RetryEngineError("unsupported_reconciliation_policy")
@@ -283,6 +288,10 @@ class RetryEngine:
 
         released: list[RetryResult] = []
         for operation in due:
+            if operation.kind is RetryClass.CONTACT:
+                # Pre-WP-1 retry records remain visible for owner review but must
+                # never be released into an executable contact attempt.
+                continue
             policy = self.policy_for(operation.kind)
             if policy.reconcile_before_retry:
                 if operation.kind is not RetryClass.COGNITION:
@@ -329,6 +338,8 @@ class RetryEngine:
             raise OperationStateConflict("begin_attempt_requires_prepared")
 
         policy = self.policy_for(operation.kind)
+        if operation.kind is RetryClass.CONTACT and operation.attempt > 0:
+            raise RetryEngineError("contact_fresh_decision_required")
         if operation.attempt > 0 and policy.reconcile_before_retry:
             if operation.kind is not RetryClass.COGNITION:
                 raise RetryEngineError("unsupported_reconciliation_policy")
