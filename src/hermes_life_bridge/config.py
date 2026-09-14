@@ -91,6 +91,14 @@ class BridgeConfig:
     work_producer_endpoint: str = "http://127.0.0.1:8791"
     work_producer_credentials_file: str = ""
     work_producer_timeout_seconds: float = 1.0
+    # Ambient Attention Decay v0.2: best-effort owner-discussion -> normalized
+    # Life Runtime interest signal. Disabled by default; raw message text is
+    # never persisted by HLB and bearer material stays in an owner-private file.
+    ambient_interest_enabled: bool = False
+    ambient_interest_endpoint: str = "http://127.0.0.1:8794"
+    ambient_interest_runtime_id: str = "nancy-ambient-canary"
+    ambient_interest_credentials_file: str = ""
+    ambient_interest_timeout_seconds: float = 0.75
 
     @classmethod
     def from_env(cls) -> "BridgeConfig":
@@ -186,5 +194,27 @@ class BridgeConfig:
                 name="HLB_WORK_PRODUCER_TIMEOUT_SECONDS",
                 minimum=0.1,
                 maximum=10.0,
+            ),
+            ambient_interest_enabled=_strict_feature_bool(
+                get("HLB_AMBIENT_INTEREST_ENABLED", default="false"),
+                name="HLB_AMBIENT_INTEREST_ENABLED",
+            ),
+            ambient_interest_endpoint=get(
+                "HLB_AMBIENT_INTEREST_ENDPOINT",
+                default="http://127.0.0.1:8794",
+            ),
+            ambient_interest_runtime_id=get(
+                "HLB_AMBIENT_INTEREST_RUNTIME_ID",
+                default="nancy-ambient-canary",
+            ),
+            ambient_interest_credentials_file=get(
+                "HLB_AMBIENT_INTEREST_CREDENTIALS_FILE",
+                default=str(config_home / "hermes-life-bridge-ambient-interest.token"),
+            ),
+            ambient_interest_timeout_seconds=_bounded_seconds(
+                get("HLB_AMBIENT_INTEREST_TIMEOUT_SECONDS", default="0.75"),
+                name="HLB_AMBIENT_INTEREST_TIMEOUT_SECONDS",
+                minimum=0.1,
+                maximum=5.0,
             ),
         )

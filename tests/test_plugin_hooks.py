@@ -93,6 +93,58 @@ def test_gateway_hook_emits_context_activity_without_exposing_route_to_producer(
     assert seen == ["session-opaque"]
 
 
+def test_gateway_hook_refreshes_recent_interest_without_persisting_or_rewriting_turn(monkeypatch):
+    seen = []
+
+    class DummyInterestProducer:
+        def observe_owner_discussion(self, text, **kwargs):
+            seen.append((text, kwargs))
+
+    class DummyBridge:
+        def gateway_message(self, *a, **k):
+            return None
+
+    monkeypatch.setattr(plugin, "_work_producer", lambda: None)
+    monkeypatch.setattr(plugin, "_interest_producer", lambda: DummyInterestProducer())
+    monkeypatch.setattr(plugin, "_BRIDGE", DummyBridge())
+
+    class E:
+        source = "feishu"
+        message_id = "m-interest-1"
+        chat_id = "c1"
+        text = "我们继续聊 Agent Runtime"
+
+    assert plugin.on_pre_gateway_dispatch(E()) == {"action": "allow"}
+    assert seen == [
+        ("我们继续聊 Agent Runtime", {"event_ref": "m-interest-1"})
+    ]
+
+
+def test_cli_turn_refreshes_recent_interest(monkeypatch):
+    seen = []
+
+    class DummyInterestProducer:
+        def observe_owner_discussion(self, text, **kwargs):
+            seen.append((text, kwargs))
+
+    class DummyBridge:
+        def cli_turn(self, **kwargs):
+            return None
+
+    monkeypatch.setattr(plugin, "_work_producer", lambda: None)
+    monkeypatch.setattr(plugin, "_interest_producer", lambda: DummyInterestProducer())
+    monkeypatch.setattr(plugin, "_BRIDGE", DummyBridge())
+    plugin.on_pre_llm_call(
+        session_id="s",
+        user_message="persistent agent 最近如何",
+        platform="cli",
+        turn_id="t-interest",
+    )
+    assert seen == [
+        ("persistent agent 最近如何", {"event_ref": "t-interest"})
+    ]
+
+
 def test_pre_llm_call_skips_gateway_platform(monkeypatch):
     called = []
 

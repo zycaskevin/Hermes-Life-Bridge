@@ -3,6 +3,7 @@ from __future__ import annotations
 from .bridge import HermesLifeBridge
 from .compatibility import CompatibilityEvidenceStore
 from .config import BridgeConfig
+from .interest_producer import HermesInterestProducer, create_interest_producer
 from .work_producer import (
     REPORT_TOOL_NAME,
     REPORT_TOOL_SCHEMA,
@@ -14,6 +15,7 @@ from .work_producer import (
 
 _BRIDGE: HermesLifeBridge | None = None
 _WORK_PRODUCER: HermesWorkProducer | None = None
+_INTEREST_PRODUCER: HermesInterestProducer | None = None
 
 
 def _bridge() -> HermesLifeBridge:
@@ -33,6 +35,20 @@ def _work_producer_enabled() -> bool:
         return BridgeConfig.from_env().work_producer_enabled
     except Exception:
         return False
+
+
+def _interest_producer() -> HermesInterestProducer | None:
+    global _INTEREST_PRODUCER
+    try:
+        config = BridgeConfig.from_env()
+        if not config.ambient_interest_enabled:
+            return None
+        if _INTEREST_PRODUCER is None:
+            _INTEREST_PRODUCER = create_interest_producer(config)
+        return _INTEREST_PRODUCER
+    except Exception:
+        # Interest refresh is advisory and must never break a user turn.
+        return None
 
 
 def _work_producer() -> HermesWorkProducer | None:
@@ -65,6 +81,12 @@ def on_pre_gateway_dispatch(event, gateway=None, session_store=None, **kwargs):
         producer = _work_producer()
         if producer is not None:
             producer.note_context_activity(session_ref)
+        interest = _interest_producer()
+        if interest is not None:
+            interest.observe_owner_discussion(
+                str(getattr(event, "text", "") or ""),
+                event_ref=str(getattr(event, "message_id", "") or session_ref),
+            )
         _bridge().gateway_message(event, session_ref=session_ref)
     except Exception:
         pass
@@ -86,6 +108,12 @@ def on_pre_llm_call(
         producer = _work_producer()
         if producer is not None:
             producer.note_context_activity(session_id or "")
+        interest = _interest_producer()
+        if interest is not None:
+            interest.observe_owner_discussion(
+                user_message or "",
+                event_ref=turn_id or session_id or "cli",
+            )
         _bridge().cli_turn(
             session_id=session_id or "",
             turn_id=turn_id or str(kwargs.get("turn_id") or ""),
