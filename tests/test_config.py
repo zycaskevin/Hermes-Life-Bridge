@@ -116,3 +116,40 @@ def test_work_producer_config_is_disabled_by_default_and_supports_owner_private_
     assert cfg.work_producer_endpoint == "http://127.0.0.1:8792"
     assert cfg.work_producer_credentials_file == str(credentials)
     assert cfg.work_producer_timeout_seconds == 0.75
+
+
+def test_ambient_interest_config_is_disabled_by_default_and_reuses_work_runtime_credential(monkeypatch, tmp_path):
+    cfg_file = tmp_path / "empty.env"
+    cfg_file.write_text("", encoding="utf-8")
+    monkeypatch.setenv("HLB_CONFIG_FILE", str(cfg_file))
+    for name in (
+        "HLB_AMBIENT_INTEREST_ENABLED",
+        "HLB_AMBIENT_INTEREST_ENDPOINT",
+        "HLB_AMBIENT_INTEREST_RUNTIME_ID",
+        "HLB_AMBIENT_INTEREST_CREDENTIALS_FILE",
+        "HLB_AMBIENT_INTEREST_TIMEOUT_SECONDS",
+        "HLB_WORK_PRODUCER_CREDENTIALS_FILE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    cfg = BridgeConfig.from_env()
+    assert cfg.ambient_interest_enabled is False
+    assert cfg.ambient_interest_endpoint == "http://127.0.0.1:8794"
+    assert cfg.ambient_interest_runtime_id == "nancy-ambient-canary"
+    assert cfg.ambient_interest_credentials_file.endswith(
+        "hermes-life-bridge-work-producer.json"
+    )
+    assert cfg.ambient_interest_timeout_seconds == 0.75
+
+    shared_credentials = tmp_path / "shared-producer.json"
+    monkeypatch.setenv("HLB_WORK_PRODUCER_CREDENTIALS_FILE", str(shared_credentials))
+    monkeypatch.setenv("HLB_AMBIENT_INTEREST_ENABLED", "true")
+    monkeypatch.setenv("HLB_AMBIENT_INTEREST_ENDPOINT", "http://127.0.0.1:8894")
+    monkeypatch.setenv("HLB_AMBIENT_INTEREST_RUNTIME_ID", "nancy-ambient-test")
+    monkeypatch.setenv("HLB_AMBIENT_INTEREST_TIMEOUT_SECONDS", "1.25")
+    cfg = BridgeConfig.from_env()
+    assert cfg.ambient_interest_enabled is True
+    assert cfg.ambient_interest_endpoint == "http://127.0.0.1:8894"
+    assert cfg.ambient_interest_runtime_id == "nancy-ambient-test"
+    assert cfg.ambient_interest_credentials_file == str(shared_credentials)
+    assert cfg.ambient_interest_timeout_seconds == 1.25

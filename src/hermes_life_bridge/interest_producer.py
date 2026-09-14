@@ -32,6 +32,12 @@ class AmbientInterestCredentials:
         if hasattr(os, "getuid") and stat.st_uid != os.getuid():
             raise InterestProducerError("ambient_interest_credentials_wrong_owner")
         value = target.read_text(encoding="utf-8").strip()
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, dict) and isinstance(parsed.get("runtime_bearer"), str):
+            value = parsed["runtime_bearer"].strip()
         if len(value) < 16 or len(value) > 4096:
             raise InterestProducerError("ambient_interest_credentials_invalid")
         return cls(bearer=value)

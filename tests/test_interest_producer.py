@@ -79,6 +79,21 @@ def test_interest_credentials_require_owner_only_file(tmp_path: Path) -> None:
         AmbientInterestCredentials.from_file(str(token))
 
 
+def test_interest_credentials_reuse_owner_private_work_producer_runtime_bearer(tmp_path: Path) -> None:
+    credentials = tmp_path / "producer.json"
+    credentials.write_text(
+        '{"schema_version":"work-producer-credentials.v0.1",'
+        '"principal_id":"hermes:nancy:work",'
+        '"runtime_bearer":"shared-runtime-bearer-0123456789",'
+        '"work_bearer":"work-only-bearer-0123456789"}',
+        encoding="utf-8",
+    )
+    credentials.chmod(0o600)
+    loaded = AmbientInterestCredentials.from_file(str(credentials))
+    assert loaded.bearer == "shared-runtime-bearer-0123456789"
+    assert "shared-runtime-bearer" not in repr(loaded)
+
+
 def test_interest_client_rejects_non_loopback_plain_http(tmp_path: Path) -> None:
     credentials = AmbientInterestCredentials("owner-private-runtime-token-0123456789")
     with pytest.raises(InterestProducerError, match="loopback"):

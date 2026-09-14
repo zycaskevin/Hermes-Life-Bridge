@@ -209,7 +209,8 @@ class BridgeConfig:
             ),
             ambient_interest_credentials_file=get(
                 "HLB_AMBIENT_INTEREST_CREDENTIALS_FILE",
-                default=str(config_home / "hermes-life-bridge-ambient-interest.token"),
+                "HLB_WORK_PRODUCER_CREDENTIALS_FILE",
+                default=str(config_home / "hermes-life-bridge-work-producer.json"),
             ),
             ambient_interest_timeout_seconds=_bounded_seconds(
                 get("HLB_AMBIENT_INTEREST_TIMEOUT_SECONDS", default="0.75"),
