@@ -11,7 +11,7 @@ HLB does **not** own Digital Life identity, canonical memory, personality, LiveS
 
 ## Release status
 
-**HLB v0.4.2 — Runtime Reliability + governed Codex owner-decision bridge**
+**HLB v0.4.3 — Runtime Reliability + governed Codex owner-decision bridge + preserve-config live updater**
 
 | Area | Status |
 | --- | --- |
@@ -31,7 +31,7 @@ HLB does **not** own Digital Life identity, canonical memory, personality, LiveS
 
 ## Safety invariants
 
-- External proactive Contact defaults **OFF** after every install/upgrade.
+- Full installer defaults external proactive Contact **OFF**; the code-only live updater preserves the existing HLB environment byte-for-byte and never turns a disabled gate on.
 - `DELIVERY_UNKNOWN` is never blindly retried.
 - Contact retry is allowed only after authoritative evidence of non-delivery.
 - Exact private routes remain in a mode-`0600` RouteStore and never enter normal trace/Doctor output.
@@ -95,6 +95,16 @@ hlb_resolve_codex_approval(decision)
 The model cannot supply an event id, request id, thread id, command, file path, or diff. HLB derives the exact current delivery route from the same Hermes session, requires that route's newest actually-delivered Contact to be a Work Event contact, and forwards only `work_event_id + decision` to an owner-only CLB Unix socket.
 
 This feature is disabled by default with `HLB_CODEX_DECISION_ENABLED=false`. Enabling the bridge does not itself authorize Life Runtime to surface Work Events to the owner.
+
+## Preserve-config live code upgrade
+
+HLB v0.4.3 adds a separate code-only updater for an already healthy deployment:
+
+```bash
+scripts/update_code_preserve_config.sh
+```
+
+Unlike the full installer, this updater does **not** rewrite `~/.config/hermes-life-bridge.env` and does not reset the current Contact/Work Producer/Ambient/Codex-decision flags. It backs up the live plugin code, stops HLB workers, replaces only the plugin tree while preserving the existing `.venv`, restarts HLB user services and the Hermes gateway, requires HLB Doctor to return `HEALTHY`, and verifies the HLB env SHA-256 plus selected non-secret flags are unchanged. Any failed acceptance restores the previous plugin code automatically.
 
 ## Long-running operation
 
