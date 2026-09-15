@@ -1,5 +1,6 @@
 from hermes_life_bridge import plugin
 from hermes_life_bridge.config import BridgeConfig
+from hermes_life_bridge.codex_decision import CODEX_DECISION_TOOL_NAME
 from hermes_life_bridge.work_producer import REPORT_TOOL_NAME
 
 
@@ -15,12 +16,16 @@ class Ctx:
         self.tools[name] = kwargs
 
 
-def _config(work_producer_enabled: bool = False) -> BridgeConfig:
+def _config(
+    work_producer_enabled: bool = False,
+    codex_decision_enabled: bool = False,
+) -> BridgeConfig:
     return BridgeConfig(
         life_did="did:example:life",
         runtime_socket="/tmp/runtime.sock",
         trace_path="/tmp/trace.jsonl",
         work_producer_enabled=work_producer_enabled,
+        codex_decision_enabled=codex_decision_enabled,
     )
 
 
@@ -33,8 +38,9 @@ def test_registers_stable_work_contract_but_hides_tool_when_disabled(monkeypatch
         "pre_llm_call",
         "post_tool_call",
     }
-    assert set(ctx.tools) == {REPORT_TOOL_NAME}
+    assert set(ctx.tools) == {REPORT_TOOL_NAME, CODEX_DECISION_TOOL_NAME}
     assert ctx.tools[REPORT_TOOL_NAME]["check_fn"]() is False
+    assert ctx.tools[CODEX_DECISION_TOOL_NAME]["check_fn"]() is False
 
 
 def test_registers_work_observer_and_report_tool_when_enabled(monkeypatch):
@@ -46,10 +52,26 @@ def test_registers_work_observer_and_report_tool_when_enabled(monkeypatch):
         "pre_llm_call",
         "post_tool_call",
     }
-    assert set(ctx.tools) == {REPORT_TOOL_NAME}
+    assert set(ctx.tools) == {REPORT_TOOL_NAME, CODEX_DECISION_TOOL_NAME}
     assert ctx.tools[REPORT_TOOL_NAME]["toolset"] == "safe"
     assert ctx.tools[REPORT_TOOL_NAME]["schema"]["function"]["name"] == REPORT_TOOL_NAME
     assert ctx.tools[REPORT_TOOL_NAME]["check_fn"]() is True
+
+
+def test_registers_codex_decision_tool_only_when_enabled(monkeypatch):
+    monkeypatch.setattr(
+        plugin.BridgeConfig,
+        "from_env",
+        staticmethod(lambda: _config(False, True)),
+    )
+    ctx = Ctx()
+    plugin.register(ctx)
+    tool = ctx.tools[CODEX_DECISION_TOOL_NAME]
+    assert tool["toolset"] == "safe"
+    assert tool["schema"]["function"]["name"] == CODEX_DECISION_TOOL_NAME
+    assert set(tool["schema"]["function"]["parameters"]["properties"]) == {"decision"}
+    assert tool["check_fn"]() is True
+    assert ctx.tools[REPORT_TOOL_NAME]["check_fn"]() is False
 
 
 def test_gateway_hook_always_allows(monkeypatch):

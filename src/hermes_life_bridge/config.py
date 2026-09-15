@@ -91,6 +91,11 @@ class BridgeConfig:
     work_producer_endpoint: str = "http://127.0.0.1:8791"
     work_producer_credentials_file: str = ""
     work_producer_timeout_seconds: float = 1.0
+    # CLB-003: owner decision routing from an authenticated Hermes/Nancy turn
+    # to a local owner-only Codex Life Bridge decision socket. Disabled by default.
+    codex_decision_enabled: bool = False
+    codex_decision_socket: str = ""
+    codex_decision_timeout_seconds: float = 2.0
     # Ambient Attention Decay v0.2: best-effort owner-discussion -> normalized
     # Life Runtime interest signal. Disabled by default; raw message text is
     # never persisted by HLB and bearer material stays in an owner-private file.
@@ -192,6 +197,20 @@ class BridgeConfig:
             work_producer_timeout_seconds=_bounded_seconds(
                 get("HLB_WORK_PRODUCER_TIMEOUT_SECONDS", default="1.0"),
                 name="HLB_WORK_PRODUCER_TIMEOUT_SECONDS",
+                minimum=0.1,
+                maximum=10.0,
+            ),
+            codex_decision_enabled=_strict_feature_bool(
+                get("HLB_CODEX_DECISION_ENABLED", default="false"),
+                name="HLB_CODEX_DECISION_ENABLED",
+            ),
+            codex_decision_socket=get(
+                "HLB_CODEX_DECISION_SOCKET",
+                default=str(state_home / "codex-life-bridge" / "owner-decision.sock"),
+            ),
+            codex_decision_timeout_seconds=_bounded_seconds(
+                get("HLB_CODEX_DECISION_TIMEOUT_SECONDS", default="2.0"),
+                name="HLB_CODEX_DECISION_TIMEOUT_SECONDS",
                 minimum=0.1,
                 maximum=10.0,
             ),

@@ -1,5 +1,5 @@
 name: hermes-life-bridge
-version: "0.4.1"
+version: "0.4.2"
 description: Reliable Hermes adapter for Life Runtime ingress, cognition, governed contact, recovery, compatibility, and diagnostics.
 provides_hooks:
   - pre_gateway_dispatch
@@ -7,3 +7,4 @@ provides_hooks:
   - post_tool_call
 provides_tools:
   - hlb_report_work_event
+  - hlb_resolve_codex_approval

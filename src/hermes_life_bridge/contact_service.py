@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 from typing import NoReturn
 
 from .config import BridgeConfig
@@ -45,6 +46,22 @@ def _target_platform(target: str) -> str:
 
 def _error_fingerprint(exc: Exception) -> str:
     return hashlib.sha256(str(exc).encode("utf-8")).hexdigest()[:16]
+
+
+_WORK_EVENT_REF_RE = re.compile(r"work-event://([A-Za-z0-9][A-Za-z0-9_.:-]{0,255})\Z")
+
+
+def _work_event_id(evidence_refs: list[str]) -> str:
+    matches = {
+        match.group(1)
+        for ref in evidence_refs
+        if isinstance(ref, str)
+        for match in [_WORK_EVENT_REF_RE.fullmatch(ref)]
+        if match is not None
+    }
+    if len(matches) != 1:
+        return ""
+    return next(iter(matches))
 
 
 def _request_hash(intent: ContactIntentEnvelope, decision: ContactDecisionEnvelope, execution_target: str | None = None) -> str:
@@ -344,6 +361,11 @@ class ContactService:
                 "intent_id": intent.intent_id,
                 "target": execution_target,
                 "message_hash": intent.message_hash,
+                **(
+                    {"work_event_id": _work_event_id(intent.evidence_refs)}
+                    if _work_event_id(intent.evidence_refs)
+                    else {}
+                ),
             },
             created_at=intent.created_at,
         )

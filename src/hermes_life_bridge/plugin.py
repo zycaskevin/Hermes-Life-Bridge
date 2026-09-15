@@ -1,9 +1,22 @@
 from __future__ import annotations
 
+from collections import OrderedDict
+import json
+import threading
+import time
+
 from .bridge import HermesLifeBridge
 from .compatibility import CompatibilityEvidenceStore
+from .codex_decision import (
+    CODEX_DECISION_TOOL_NAME,
+    CODEX_DECISION_TOOL_SCHEMA,
+    CODEX_DECISION_TOOLSET,
+    CodexDecisionError,
+    CodexDecisionRouter,
+)
 from .config import BridgeConfig
 from .interest_producer import HermesInterestProducer, create_interest_producer
+from .routing import HermesRoute, is_delivery_route, normalize_session_source
 from .work_producer import (
     REPORT_TOOL_NAME,
     REPORT_TOOL_SCHEMA,
@@ -16,6 +29,11 @@ from .work_producer import (
 _BRIDGE: HermesLifeBridge | None = None
 _WORK_PRODUCER: HermesWorkProducer | None = None
 _INTEREST_PRODUCER: HermesInterestProducer | None = None
+_CODEX_DECISION_ROUTER: CodexDecisionRouter | None = None
+_SESSION_ROUTE_TARGETS: OrderedDict[str, tuple[str, float]] = OrderedDict()
+_SESSION_ROUTE_LOCK = threading.RLock()
+_MAX_SESSION_ROUTES = 256
+_SESSION_ROUTE_TTL_SECONDS = 300.0
 
 
 def _bridge() -> HermesLifeBridge:
@@ -35,6 +53,82 @@ def _work_producer_enabled() -> bool:
         return BridgeConfig.from_env().work_producer_enabled
     except Exception:
         return False
+
+
+def _codex_decision_enabled() -> bool:
+    try:
+        return BridgeConfig.from_env().codex_decision_enabled
+    except Exception:
+        return False
+
+
+def _codex_decision_router() -> CodexDecisionRouter | None:
+    global _CODEX_DECISION_ROUTER
+    try:
+        config = BridgeConfig.from_env()
+        if not config.codex_decision_enabled:
+            return None
+        if _CODEX_DECISION_ROUTER is None:
+            _CODEX_DECISION_ROUTER = CodexDecisionRouter(config)
+        return _CODEX_DECISION_ROUTER
+    except Exception:
+        return None
+
+def _remember_session_route(session_ref: str, event) -> None:
+    if not session_ref:
+        return
+    source = getattr(event, "source", None)
+    route = normalize_session_source(source)
+    if not is_delivery_route(route):
+        platform = route.platform
+        if not platform and isinstance(source, str):
+            platform = source.strip().lower()
+        route = HermesRoute(
+            platform=platform,
+            chat_id=str(getattr(event, "chat_id", "") or "").strip(),
+            thread_id=str(getattr(event, "thread_id", "") or "").strip(),
+            message_id=str(getattr(event, "message_id", "") or "").strip(),
+        )
+    if not is_delivery_route(route):
+        return
+    with _SESSION_ROUTE_LOCK:
+        _SESSION_ROUTE_TARGETS.pop(session_ref, None)
+        _SESSION_ROUTE_TARGETS[session_ref] = (route.target, time.monotonic())
+        while len(_SESSION_ROUTE_TARGETS) > _MAX_SESSION_ROUTES:
+            _SESSION_ROUTE_TARGETS.popitem(last=False)
+
+def _session_route_target(session_ref: str) -> str:
+    if not session_ref:
+        return ""
+    with _SESSION_ROUTE_LOCK:
+        stored = _SESSION_ROUTE_TARGETS.get(session_ref)
+        if stored is None:
+            return ""
+        target, observed_mono = stored
+        if time.monotonic() - observed_mono > _SESSION_ROUTE_TTL_SECONDS:
+            _SESSION_ROUTE_TARGETS.pop(session_ref, None)
+            return ""
+        _SESSION_ROUTE_TARGETS.move_to_end(session_ref)
+        return target
+
+def resolve_codex_approval_handler(args: dict, **kwargs) -> str:
+    if not isinstance(args, dict) or set(args) != {"decision"}:
+        return json.dumps({"error": "invalid_codex_decision"}, sort_keys=True, separators=(",", ":"))
+    decision = args.get("decision")
+    if decision not in {"accept", "acceptForSession", "decline", "cancel"}:
+        return json.dumps({"error": "invalid_codex_decision"}, sort_keys=True, separators=(",", ":"))
+    session_ref = str(kwargs.get("session_id") or "")
+    target = _session_route_target(session_ref)
+    if not target:
+        return json.dumps({"error": "no_current_delivery_route"}, sort_keys=True, separators=(",", ":"))
+    router = _codex_decision_router()
+    if router is None:
+        return json.dumps({"error": "codex_decision_routing_disabled"}, sort_keys=True, separators=(",", ":"))
+    try:
+        result = router.resolve(target=target, decision=decision)
+    except CodexDecisionError as exc:
+        return json.dumps({"error": str(exc)[:128]}, sort_keys=True, separators=(",", ":"))
+    return json.dumps(result, sort_keys=True, separators=(",", ":"))
 
 
 def _interest_producer() -> HermesInterestProducer | None:
@@ -78,6 +172,7 @@ def on_pre_gateway_dispatch(event, gateway=None, session_store=None, **kwargs):
             or getattr(event, "sender_id", "")
             or ""
         )
+        _remember_session_route(session_ref, event)
         producer = _work_producer()
         if producer is not None:
             producer.note_context_activity(session_ref)
@@ -170,6 +265,14 @@ def register(ctx):
             handler=report_work_event_handler,
             check_fn=_work_producer_enabled,
             description=REPORT_TOOL_SCHEMA["function"]["description"],
+        )
+        register_tool(
+            name=CODEX_DECISION_TOOL_NAME,
+            toolset=CODEX_DECISION_TOOLSET,
+            schema=CODEX_DECISION_TOOL_SCHEMA,
+            handler=resolve_codex_approval_handler,
+            check_fn=_codex_decision_enabled,
+            description=CODEX_DECISION_TOOL_SCHEMA["function"]["description"],
         )
     try:
         _evidence_store().record_registration(plugin_api_version="register_hook")
