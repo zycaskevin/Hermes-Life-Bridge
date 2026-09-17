@@ -11,7 +11,7 @@ HLB does **not** own Digital Life identity, canonical memory, personality, LiveS
 
 ## Release status
 
-**HLB v0.4.0 — Runtime Reliability & Compatibility release**
+**HLB v0.4.3 — Runtime Reliability + governed Codex owner-decision bridge + preserve-config live updater**
 
 | Area | Status |
 | --- | --- |
@@ -27,10 +27,11 @@ HLB does **not** own Digital Life identity, canonical memory, personality, LiveS
 | Fault injection | ✅ Complete |
 | Accelerated soak / bounded maintenance | ✅ Complete |
 | Nancy 1h/24h/72h live soak tooling | ✅ Included; run after deployment |
+| Codex approval owner-decision routing | ✅ Implemented; disabled by default |
 
 ## Safety invariants
 
-- External proactive Contact defaults **OFF** after every install/upgrade.
+- Full installer defaults external proactive Contact **OFF**; the code-only live updater preserves the existing HLB environment byte-for-byte and never turns a disabled gate on.
 - `DELIVERY_UNKNOWN` is never blindly retried.
 - Contact retry is allowed only after authoritative evidence of non-delivery.
 - Exact private routes remain in a mode-`0600` RouteStore and never enter normal trace/Doctor output.
@@ -79,9 +80,35 @@ DELIVERY_UNKNOWN
 
 There is no automatic `DELIVERY_UNKNOWN → retry` path.
 
+## Codex owner-decision bridge
+
+HLB v0.4.2 can close a governed Codex approval loop without exposing Codex-internal request identity to Nancy.
+
+Life Runtime already carries the canonical `work-event://<event_id>` evidence reference into the HLB Contact intent. When a delivered owner contact is about an actionable Codex blocker, HLB stores only that opaque Work Event id beside its redacted Contact metadata.
+
+The Nancy tool surface is intentionally narrow:
+
+```text
+hlb_resolve_codex_approval(decision)
+```
+
+The model cannot supply an event id, request id, thread id, command, file path, or diff. HLB derives the exact current delivery route from the same Hermes session, requires that route's newest actually-delivered Contact to be a Work Event contact, and forwards only `work_event_id + decision` to an owner-only CLB Unix socket.
+
+This feature is disabled by default with `HLB_CODEX_DECISION_ENABLED=false`. Enabling the bridge does not itself authorize Life Runtime to surface Work Events to the owner.
+
+## Preserve-config live code upgrade
+
+HLB v0.4.3 adds a separate code-only updater for an already healthy deployment:
+
+```bash
+scripts/update_code_preserve_config.sh
+```
+
+Unlike the full installer, this updater does **not** rewrite `~/.config/hermes-life-bridge.env` and does not reset the current Contact/Work Producer/Ambient/Codex-decision flags. It backs up the live plugin code, stops HLB workers, replaces only the plugin tree while preserving the existing `.venv`, restarts HLB user services and the Hermes gateway, requires HLB Doctor to return `HEALTHY`, and verifies the HLB env SHA-256 plus selected non-secret flags are unchanged. Any failed acceptance restores the previous plugin code automatically.
+
 ## Long-running operation
 
-HLB v0.4.0 includes:
+HLB v0.4.2 includes:
 
 - automatic Percept recovery daemon;
 - Cognition and Contact services with automatic systemd restart;
@@ -104,7 +131,7 @@ The installer:
 1. verifies Life Runtime is available;
 2. backs up the previous HLB plugin/config/systemd units;
 3. stops HLB workers before replacing files;
-4. installs v0.4.0 in an isolated venv;
+4. installs v0.4.2 in an isolated venv;
 5. removes the old competing `nancy-live-runtime` plugin from active discovery;
 6. installs/starts Cognition, Contact, Percept recovery, and maintenance services;
 7. resets external Contact delivery to **OFF**;
@@ -163,7 +190,7 @@ These monitors do not enable proactive Contact; they periodically record Doctor/
 
 ## Development acceptance
 
-The v0.4.0 release candidate passed:
+The current release line preserves the v0.4.0 reliability acceptance and adds v0.4.2 Codex decision-routing tests:
 
 - full automated HLB regression/failure suite;
 - Pyright on changed reliability modules;

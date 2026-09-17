@@ -151,6 +151,35 @@ class ContactStore:
                 raise ValueError("contact_idempotency_conflict")
             self.conn.commit()
 
+    def latest_delivered_work_event_for_target(self, target: str) -> str | None:
+        expected_hash = _target_hash(target)
+        with self._lock:
+            rows = self.conn.execute(
+                """SELECT q.metadata_json, r.receipt_json
+                   FROM requests q
+                   JOIN receipts r ON r.idempotency_key = q.idempotency_key
+                   ORDER BY q.created_at DESC, q.rowid DESC
+                   LIMIT 100"""
+            ).fetchall()
+        for row in rows:
+            try:
+                metadata = json.loads(row["metadata_json"])
+                receipt = json.loads(row["receipt_json"])
+            except Exception:
+                continue
+            if metadata.get("target_hash") != expected_hash:
+                continue
+            if receipt.get("status") != "delivered":
+                continue
+            work_event_id = str(metadata.get("work_event_id") or "")
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}", work_event_id):
+                return work_event_id
+            # The newest actually-delivered contact for this exact route was
+            # unrelated to a Work Event. Fail closed instead of reaching back
+            # to an older approval and risking accidental consent.
+            return None
+        return None
+
     def get_receipt(self, idempotency_key: str):
         with self._lock:
             row = self.conn.execute(

@@ -27,9 +27,10 @@ from hermes_life_bridge.contact_reconciliation import (
 from hermes_life_bridge.contact_service import (
     _request_hash,
     ContactDeliveryUnknown,
-    ContactRetryDeferred,
+    ContactFreshDecisionRequired,
     ContactService,
 )
+from hermes_life_bridge.retry_engine import RetryEngineError
 from hermes_life_bridge.contact_store import ContactStore
 from hermes_life_bridge.operation_store import OperationStore
 from hermes_life_bridge.reliability_contract import (
@@ -181,19 +182,77 @@ def test_successful_contact_commits_receipt_and_operation_once(tmp_path):
     assert operation.delivery_outcome is DeliveryOutcome.DELIVERED
 
 
-def test_failed_safe_schedules_retry_without_immediate_resend(tmp_path):
+def test_failed_safe_requires_fresh_decision_without_scheduling_resend(tmp_path):
+    """E-WP1-06: an old intent/decision is never released for a delayed resend."""
     sender = FailedSafeSender()
     service = ContactService(cfg(tmp_path), sender)
 
-    with pytest.raises(ContactRetryDeferred) as captured:
+    with pytest.raises(ContactFreshDecisionRequired, match="fresh_decision_required"):
         service.process(make_intent(), make_decision())
 
-    assert captured.value.next_attempt_at
     assert sender.calls == 1
     operation = _single_contact_operation(service)
-    assert operation.state is OperationState.RETRY_WAIT
+    assert operation.state is OperationState.FAILED_SAFE
     assert operation.attempt == 1
     assert operation.delivery_outcome is DeliveryOutcome.FAILED_SAFE
+    assert service.retry.due_operations(now=iso(datetime.now(timezone.utc)), kind=RetryClass.CONTACT) == []
+
+
+def test_failed_safe_old_intent_never_reenters_sender(tmp_path):
+    sender = FailedSafeSender()
+    service = ContactService(cfg(tmp_path), sender)
+    intent = make_intent()
+    decision = make_decision()
+
+    with pytest.raises(ContactFreshDecisionRequired):
+        service.process(intent, decision)
+    service.sender = SuccessSender()
+    with pytest.raises(ContactFreshDecisionRequired):
+        service.process(intent, decision)
+
+    assert sender.calls == 1
+    assert service.sender.calls == 0
+
+
+def test_legacy_due_retry_wait_never_reenters_sender(tmp_path):
+    """A pre-WP-1 scheduled record remains blocked even when it is already due."""
+    failed = FailedSafeSender()
+    service = ContactService(cfg(tmp_path), failed)
+    intent = make_intent()
+    decision = make_decision()
+
+    with pytest.raises(ContactFreshDecisionRequired):
+        service.process(intent, decision)
+    operation = _single_contact_operation(service)
+    service.operations.schedule_retry(
+        operation.operation_id,
+        next_attempt_at=iso(datetime.now(timezone.utc) - timedelta(seconds=1)),
+        updated_at=iso(datetime.now(timezone.utc)),
+    )
+    released = service.retry.release_due(
+        now=iso(datetime.now(timezone.utc)),
+        kind=RetryClass.CONTACT,
+    )
+    assert released == []
+
+    # Even a caller that force-releases the legacy row cannot begin a resend.
+    service.operations.make_retry_ready(
+        operation.operation_id,
+        updated_at=iso(datetime.now(timezone.utc)),
+    )
+    with pytest.raises(RetryEngineError, match="contact_fresh_decision_required"):
+        service.retry.begin_attempt(
+            operation.operation_id,
+            now=iso(datetime.now(timezone.utc)),
+        )
+
+    success = SuccessSender()
+    service.sender = success
+    with pytest.raises(ContactFreshDecisionRequired, match="fresh_decision_required"):
+        service.process(intent, decision)
+
+    assert failed.calls == 1
+    assert success.calls == 0
 
 
 def test_unknown_outcome_without_evidence_stays_locked_and_never_resends(tmp_path):
@@ -239,7 +298,8 @@ def test_unknown_outcome_delivered_probe_returns_receipt_without_resend(tmp_path
     assert sender.calls == 1
 
 
-def test_unknown_outcome_not_delivered_probe_enters_bounded_retry_only(tmp_path):
+def test_unknown_outcome_not_delivered_probe_requires_fresh_decision(tmp_path):
+    """E-WP1-07: even confirmed non-delivery cannot revive an old decision."""
     sender = UnknownSender()
 
     def probe(operation: BridgeOperation) -> ContactEvidence:
@@ -249,39 +309,41 @@ def test_unknown_outcome_not_delivered_probe_enters_bounded_retry_only(tmp_path)
         )
 
     service = ContactService(cfg(tmp_path), sender, evidence_probe=probe)
-    with pytest.raises(ContactRetryDeferred):
+    with pytest.raises(ContactFreshDecisionRequired, match="fresh_decision_required"):
         service.process(make_intent(), make_decision())
 
     assert sender.calls == 1
     operation = _single_contact_operation(service)
-    assert operation.state is OperationState.RETRY_WAIT
+    assert operation.state is OperationState.FAILED_SAFE
     assert operation.delivery_outcome is DeliveryOutcome.FAILED_SAFE
+    assert service.retry.due_operations(now=iso(datetime.now(timezone.utc)), kind=RetryClass.CONTACT) == []
 
 
-def test_retry_requires_resubmitted_payload_and_does_not_store_message(tmp_path):
+def test_fresh_intent_and_decision_can_succeed_after_failed_safe(tmp_path):
     first_sender = FailedSafeSender()
     service = ContactService(cfg(tmp_path), first_sender)
-    intent = make_intent(message="DO NOT PERSIST RETRY PAYLOAD")
-    decision = make_decision()
+    original = make_intent(message="DO NOT PERSIST RETRY PAYLOAD")
 
-    with pytest.raises(ContactRetryDeferred):
-        service.process(intent, decision)
-    operation = _single_contact_operation(service)
-    assert operation.state is OperationState.RETRY_WAIT
+    with pytest.raises(ContactFreshDecisionRequired):
+        service.process(original, make_decision())
 
-    # Simulate the due scheduler releasing eligibility. HLB still has no stored
-    # message payload and therefore cannot send anything by itself.
-    service.operations.make_retry_ready(operation.operation_id, updated_at=iso(datetime.now(timezone.utc)))
-    success = SuccessSender("provider-retry-2")
+    success = SuccessSender("provider-fresh-2")
     service.sender = success
-    receipt = service.process(intent, decision)
+    fresh = make_intent(
+        intent_id="i-v0044-fresh",
+        idempotency_key="contact:v0044:fresh",
+        message="FRESH PAYLOAD",
+    )
+    receipt = service.process(fresh, make_decision("i-v0044-fresh"))
+
     assert receipt.status == "delivered"
     assert first_sender.calls == 1
     assert success.calls == 1
-    final = _single_contact_operation(service)
-    assert final.state is OperationState.COMPLETED
-    assert final.attempt == 2
-
+    operations = service.operations.list_operations(kind=RetryClass.CONTACT)
+    assert {operation.state for operation in operations} == {
+        OperationState.FAILED_SAFE,
+        OperationState.COMPLETED,
+    }
     for path in tmp_path.glob("*.sqlite3*"):
         if path.is_file():
             assert b"DO NOT PERSIST RETRY PAYLOAD" not in path.read_bytes()
