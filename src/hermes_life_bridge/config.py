@@ -104,6 +104,11 @@ class BridgeConfig:
     ambient_interest_runtime_id: str = "nancy-ambient-canary"
     ambient_interest_credentials_file: str = ""
     ambient_interest_timeout_seconds: float = 0.75
+    # DLD -> Hermes Developmental Expression Gate. The projection is derived,
+    # owner-local and read on every turn so runtime behavior tracks live DLD state
+    # without making Hermes or the model the development authority.
+    development_context_enabled: bool = False
+    development_projection_file: str = ""
 
     @classmethod
     def from_env(cls) -> "BridgeConfig":
@@ -236,5 +241,13 @@ class BridgeConfig:
                 name="HLB_AMBIENT_INTEREST_TIMEOUT_SECONDS",
                 minimum=0.1,
                 maximum=5.0,
+            ),
+            development_context_enabled=_strict_feature_bool(
+                get("HLB_DEVELOPMENT_CONTEXT_ENABLED", default="false"),
+                name="HLB_DEVELOPMENT_CONTEXT_ENABLED",
+            ),
+            development_projection_file=get(
+                "HLB_DEVELOPMENT_PROJECTION_FILE",
+                default="",
             ),
         )

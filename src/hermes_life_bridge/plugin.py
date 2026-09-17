@@ -15,6 +15,10 @@ from .codex_decision import (
     CodexDecisionRouter,
 )
 from .config import BridgeConfig
+from .development_context import (
+    DevelopmentContextProjector,
+    safe_development_context,
+)
 from .interest_producer import HermesInterestProducer, create_interest_producer
 from .routing import HermesRoute, is_delivery_route, normalize_session_source
 from .work_producer import (
@@ -29,6 +33,7 @@ from .work_producer import (
 _BRIDGE: HermesLifeBridge | None = None
 _WORK_PRODUCER: HermesWorkProducer | None = None
 _INTEREST_PRODUCER: HermesInterestProducer | None = None
+_DEVELOPMENT_CONTEXT_PROJECTOR: DevelopmentContextProjector | None = None
 _CODEX_DECISION_ROUTER: CodexDecisionRouter | None = None
 _SESSION_ROUTE_TARGETS: OrderedDict[str, tuple[str, float]] = OrderedDict()
 _SESSION_ROUTE_LOCK = threading.RLock()
@@ -145,6 +150,26 @@ def _interest_producer() -> HermesInterestProducer | None:
         return None
 
 
+def _development_context() -> str:
+    global _DEVELOPMENT_CONTEXT_PROJECTOR
+    try:
+        config = BridgeConfig.from_env()
+        if not config.development_context_enabled:
+            return ""
+        if not config.development_projection_file:
+            return safe_development_context()
+        if _DEVELOPMENT_CONTEXT_PROJECTOR is None:
+            _DEVELOPMENT_CONTEXT_PROJECTOR = DevelopmentContextProjector(
+                life_did=config.life_did,
+                projection_file=config.development_projection_file,
+            )
+        return _DEVELOPMENT_CONTEXT_PROJECTOR.context()
+    except Exception:
+        # If the expression gate is configured but unreadable, fail safe toward
+        # developmental humility rather than silently reverting to mature-agent behavior.
+        return safe_development_context()
+
+
 def _work_producer() -> HermesWorkProducer | None:
     global _WORK_PRODUCER
     try:
@@ -195,10 +220,12 @@ def on_pre_llm_call(
     turn_id: str = "",
     **kwargs,
 ):
+    development_context = _development_context()
     # Gateway messages are already authoritatively observed by pre_gateway_dispatch.
-    # pre_llm_call is retained for CLI only to avoid double ingestion.
+    # For gateway turns this hook is context-only, avoiding double ingestion while
+    # still applying the DLD Developmental Expression Gate to every LLM call.
     if platform not in ("", "cli", None):
-        return None
+        return {"context": development_context} if development_context else None
     try:
         producer = _work_producer()
         if producer is not None:
@@ -216,7 +243,7 @@ def on_pre_llm_call(
         )
     except Exception:
         pass
-    return None
+    return {"context": development_context} if development_context else None
 
 
 def on_post_tool_call(

@@ -175,10 +175,34 @@ def test_pre_llm_call_skips_gateway_platform(monkeypatch):
             called.append(kwargs)
 
     monkeypatch.setattr(plugin, "_BRIDGE", DummyBridge())
-    plugin.on_pre_llm_call(
+    monkeypatch.setattr(plugin, "_development_context", lambda: "")
+    result = plugin.on_pre_llm_call(
         session_id="s", user_message="x", platform="telegram", turn_id="t"
     )
     assert called == []
+    assert result is None
+
+
+def test_pre_llm_call_injects_dld_context_for_gateway_without_double_ingestion(monkeypatch):
+    called = []
+
+    class DummyBridge:
+        def cli_turn(self, **kwargs):
+            called.append(kwargs)
+
+    monkeypatch.setattr(plugin, "_BRIDGE", DummyBridge())
+    monkeypatch.setattr(
+        plugin,
+        "_development_context",
+        lambda: "<digital-life-development-context>EARLY_FORMATION</digital-life-development-context>",
+    )
+    result = plugin.on_pre_llm_call(
+        session_id="s", user_message="complex request", platform="telegram", turn_id="t"
+    )
+    assert called == []
+    assert result == {
+        "context": "<digital-life-development-context>EARLY_FORMATION</digital-life-development-context>"
+    }
 
 
 def test_post_tool_hook_discards_raw_args_and_result_for_ordinary_tools(monkeypatch):
