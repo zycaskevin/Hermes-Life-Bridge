@@ -54,10 +54,16 @@ def test_owner_discussion_emits_bounded_normalized_interest_signal_without_persi
     assert len(client.signals) == 1
     signal = client.signals[0]
     assert signal["runtime_id"] == "nancy-ambient-canary"
+    assert signal["life_did"] == "did:example:life"
     assert signal["source"] == "owner_discussion"
     assert signal["strength"] == 0.9
     assert signal["subjects"] == ["我最近又想继续研究 Agent Runtime 和 persistent agent"]
     assert signal["signal_id"].startswith("interest:hermes:")
+    assert signal["provenance"] == {
+        "origin": "REAL",
+        "actor_kind": "human",
+        "source_ref": "message-1",
+    }
 
 
 def test_empty_owner_message_emits_no_interest_signal(tmp_path: Path) -> None:

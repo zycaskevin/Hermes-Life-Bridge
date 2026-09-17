@@ -129,10 +129,16 @@ class HermesInterestProducer:
             {
                 "signal_id": signal_id,
                 "runtime_id": self.config.ambient_interest_runtime_id,
+                "life_did": self.config.life_did,
                 "observed_at": at,
                 "source": "owner_discussion",
                 "strength": 0.9,
                 "subjects": [bounded],
+                "provenance": {
+                    "origin": "REAL",
+                    "actor_kind": "human",
+                    "source_ref": (event_ref or signal_id)[:1024],
+                },
             }
         )
 
