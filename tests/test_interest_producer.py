@@ -73,6 +73,17 @@ def test_empty_owner_message_emits_no_interest_signal(tmp_path: Path) -> None:
     assert client.signals == []
 
 
+@pytest.mark.parametrize(
+    "text",
+    ["/start", "/start@lilylilybabybot", "/start twin-onboarding"],
+)
+def test_telegram_start_transport_command_emits_no_interest_signal(tmp_path: Path, text: str) -> None:
+    client = FakeClient()
+    producer = HermesInterestProducer(config(tmp_path), client=client)
+    assert producer.observe_owner_discussion(text, event_ref="telegram-start") is None
+    assert client.signals == []
+
+
 def test_interest_credentials_require_owner_only_file(tmp_path: Path) -> None:
     token = tmp_path / "ambient.token"
     token.write_text("owner-private-runtime-token-0123456789", encoding="utf-8")

@@ -5,12 +5,16 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from urllib import error as urlerror
 from urllib import parse as urlparse
 from urllib import request as urlrequest
 
 from .config import BridgeConfig
+
+
+_TRANSPORT_START_COMMAND = re.compile(r"^/start(?:@[A-Za-z0-9_]+)?(?:\s+\S.*)?$")
 
 
 class InterestProducerError(RuntimeError):
@@ -151,6 +155,11 @@ def _bounded_text(value: str) -> str:
     # Enough context for subject matching without turning the interest boundary
     # into a second raw-conversation store or unlimited payload path.
     normalized = " ".join(str(value or "").split())
+    # Telegram /start is transport activation, not evidence of owner interest.
+    # Suppress it before Life Runtime can create a Candidate Watch. DLMF has an
+    # independent transient-source gate for the same platform control command.
+    if _TRANSPORT_START_COMMAND.fullmatch(normalized):
+        return ""
     return normalized[:1024]
 
 
