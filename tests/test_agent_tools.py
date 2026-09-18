@@ -53,6 +53,17 @@ def completed(tools,rid):
         'status':'completed','conversation_research_verified':True,'trigger_kind':'conversation_tool','watch_id':None,
         'summary':'Actual bounded result.\nNew line.', 'search_count':1,'read_count':1,
         'source_refs':['https://example.com/source'],'selected_runtime':'hermes','model_provider':'test','model':'test',
+        'runtime_selection':{
+            'selection_id':'agent-selection:test','task_id':rid,'requirements_hash':'sha256:'+'1'*64,
+            'authorization_id':'auth:test','authorization_hash':'sha256:'+'2'*64,'mode':'execute',
+            'selected_runtime_id':'hermes','eligible_runtime_ids':['hermes'],
+            'candidates':[{'contract_version':'0.1','runtime_id':'hermes','runtime_card_hash':'sha256:'+'3'*64,
+                           'eligible':True,'rejection_reasons':[]}], 'execution_allowed':True},
+        'budget_gate':{'schema':'agent-factory.research-budget-gate.v1','decision':'ALLOW_WITH_BOUND',
+            'trigger_kind':'conversation_tool','requested':{'max_searches':1,'max_reads':1,'max_runtime_ms':60000,
+                'max_tokens':1000,'max_cost_usd':'0.05'},'authorized':{'max_tokens':1000,'max_cost_usd':'0.05'},
+            'route_profile_max_cost_usd':'0.25','effective_max_cost_usd':'0.05','actual_cost_usd':None,
+            'actual_cost_status':'NOT_REPORTED','spend_compliance':'UNKNOWN'},
         'provenance':{'authority':'agent-factory','origin':'SYNTHETIC','execution_ref':'agent-factory://conversation-research/test'}}
 
 
@@ -120,6 +131,12 @@ def test_research_is_real_receipt_driven_idempotent_and_bounded(tools,monkeypatc
     one=tools.research('public topic',session='session')
     two=tools.research('public topic',session='session')
     assert one['ok'] and two['replayed'] and len(seen)==1
+    assert one['routeDecision']['selectedRuntime']=='hermes'
+    assert one['routeDecision']['candidateCoverage']=='FULL_OWNER_SELECTION'
+    assert one['budgetGate']['decision']=='ALLOW_WITH_BOUND'
+    assert one['budgetGate']['effectiveMaxCostUsd']=='0.05'
+    assert one['budgetGate']['actualCostStatus']=='NOT_REPORTED'
+    assert one['budgetGate']['spendCompliance']=='UNKNOWN'
     assert 'watch_id' not in seen[0] and seen[0]['life_did']==DID
     assert seen[0]['budget']['max_searches']==1
     assert tools.research('another topic',session='session')['ok']
@@ -169,6 +186,15 @@ def test_operator_diagnostic_does_not_consume_owner_budget(tools,monkeypatch):
     denied=tools.research('owner three',consumer='native_tool')
     assert denied['executed'] is False
     assert len(seen)==4
+
+
+def test_research_rejects_missing_route_or_budget_owner_evidence(tools,monkeypatch):
+    for missing in ('runtime_selection','budget_gate'):
+        def fake(intent, missing=missing):
+            data=completed(tools,intent['intent_id']);data.pop(missing);return data
+        monkeypatch.setattr(tools,'_run_af',fake)
+        result=tools.research('topic-'+missing,consumer='operator_diagnostic')
+        assert result['ok'] is False and result['completed'] is False
 
 
 def test_bad_research_provenance_does_not_claim_success(tools,monkeypatch):
