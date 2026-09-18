@@ -5,6 +5,7 @@ import json
 import threading
 import time
 
+from .affect_context import AffectContextProjector
 from .bridge import HermesLifeBridge
 from .compatibility import CompatibilityEvidenceStore
 from .codex_decision import (
@@ -34,6 +35,7 @@ _BRIDGE: HermesLifeBridge | None = None
 _WORK_PRODUCER: HermesWorkProducer | None = None
 _INTEREST_PRODUCER: HermesInterestProducer | None = None
 _DEVELOPMENT_CONTEXT_PROJECTOR: DevelopmentContextProjector | None = None
+_AFFECT_CONTEXT_PROJECTOR: AffectContextProjector | None = None
 _CODEX_DECISION_ROUTER: CodexDecisionRouter | None = None
 _SESSION_ROUTE_TARGETS: OrderedDict[str, tuple[str, float]] = OrderedDict()
 _SESSION_ROUTE_LOCK = threading.RLock()
@@ -170,6 +172,28 @@ def _development_context() -> str:
         return safe_development_context()
 
 
+def _affect_context() -> str:
+    global _AFFECT_CONTEXT_PROJECTOR
+    try:
+        config = BridgeConfig.from_env()
+        if not config.affect_context_enabled or not config.affect_state_file:
+            return ""
+        if _AFFECT_CONTEXT_PROJECTOR is None:
+            _AFFECT_CONTEXT_PROJECTOR = AffectContextProjector(
+                life_did=config.life_did,
+                state_file=config.affect_state_file,
+            )
+        return _AFFECT_CONTEXT_PROJECTOR.context()
+    except Exception:
+        # Affect is advisory. Never fabricate a transient state when the file is invalid.
+        return ""
+
+
+def _turn_context() -> str:
+    parts = [value for value in (_development_context(), _affect_context()) if value]
+    return "\n\n".join(parts)
+
+
 def _work_producer() -> HermesWorkProducer | None:
     global _WORK_PRODUCER
     try:
@@ -220,12 +244,12 @@ def on_pre_llm_call(
     turn_id: str = "",
     **kwargs,
 ):
-    development_context = _development_context()
+    turn_context = _turn_context()
     # Gateway messages are already authoritatively observed by pre_gateway_dispatch.
     # For gateway turns this hook is context-only, avoiding double ingestion while
     # still applying the DLD Developmental Expression Gate to every LLM call.
     if platform not in ("", "cli", None):
-        return {"context": development_context} if development_context else None
+        return {"context": turn_context} if turn_context else None
     try:
         producer = _work_producer()
         if producer is not None:
@@ -243,7 +267,7 @@ def on_pre_llm_call(
         )
     except Exception:
         pass
-    return {"context": development_context} if development_context else None
+    return {"context": turn_context} if turn_context else None
 
 
 def on_post_tool_call(

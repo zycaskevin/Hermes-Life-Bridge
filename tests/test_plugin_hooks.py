@@ -205,6 +205,17 @@ def test_pre_llm_call_injects_dld_context_for_gateway_without_double_ingestion(m
     }
 
 
+def test_pre_llm_call_combines_development_and_affect_context(monkeypatch):
+    monkeypatch.setattr(plugin, "_development_context", lambda: "<dld>EARLY_FORMATION</dld>")
+    monkeypatch.setattr(plugin, "_affect_context", lambda: "<affect>curiosity=0.8</affect>")
+    result = plugin.on_pre_llm_call(
+        session_id="s", user_message="x", platform="telegram", turn_id="t"
+    )
+    assert result == {
+        "context": "<dld>EARLY_FORMATION</dld>\n\n<affect>curiosity=0.8</affect>"
+    }
+
+
 def test_post_tool_hook_discards_raw_args_and_result_for_ordinary_tools(monkeypatch):
     calls = []
 

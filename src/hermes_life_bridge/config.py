@@ -109,6 +109,10 @@ class BridgeConfig:
     # without making Hermes or the model the development authority.
     development_context_enabled: bool = False
     development_projection_file: str = ""
+    # Life Runtime -> Hermes transient 6D Affect & Drive projection. This is
+    # advisory expression context only and never a personality authority.
+    affect_context_enabled: bool = False
+    affect_state_file: str = ""
 
     @classmethod
     def from_env(cls) -> "BridgeConfig":
@@ -248,6 +252,14 @@ class BridgeConfig:
             ),
             development_projection_file=get(
                 "HLB_DEVELOPMENT_PROJECTION_FILE",
+                default="",
+            ),
+            affect_context_enabled=_strict_feature_bool(
+                get("HLB_AFFECT_CONTEXT_ENABLED", default="false"),
+                name="HLB_AFFECT_CONTEXT_ENABLED",
+            ),
+            affect_state_file=get(
+                "HLB_AFFECT_STATE_FILE",
                 default="",
             ),
         )
