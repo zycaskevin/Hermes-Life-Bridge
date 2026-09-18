@@ -16,6 +16,7 @@ from .codex_decision import (
     CodexDecisionRouter,
 )
 from .config import BridgeConfig
+from .deployment_context import deployment_context
 from .development_context import (
     DevelopmentContextProjector,
     safe_development_context,
@@ -189,8 +190,24 @@ def _affect_context() -> str:
         return ""
 
 
+def _deployment_context() -> str:
+    try:
+        config = BridgeConfig.from_env()
+        if not config.deployment_context_enabled:
+            return ""
+        return deployment_context(
+            life_did=config.life_did,
+            manifest_file=config.deployment_manifest_file,
+        )
+    except Exception:
+        # Missing/invalid configuration cannot grant tools or invent memory state.
+        return ""
+
+
 def _turn_context() -> str:
-    parts = [value for value in (_development_context(), _affect_context()) if value]
+    parts = [value for value in (
+        _development_context(), _affect_context(), _deployment_context()
+    ) if value]
     return "\n\n".join(parts)
 
 

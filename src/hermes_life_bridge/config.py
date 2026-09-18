@@ -113,6 +113,9 @@ class BridgeConfig:
     # advisory expression context only and never a personality authority.
     affect_context_enabled: bool = False
     affect_state_file: str = ""
+    # Read-only facts about this conversation interface, not a tool grant.
+    deployment_context_enabled: bool = False
+    deployment_manifest_file: str = ""
 
     @classmethod
     def from_env(cls) -> "BridgeConfig":
@@ -262,4 +265,9 @@ class BridgeConfig:
                 "HLB_AFFECT_STATE_FILE",
                 default="",
             ),
+            deployment_context_enabled=_strict_feature_bool(
+                get("HLB_DEPLOYMENT_CONTEXT_ENABLED", default="false"),
+                name="HLB_DEPLOYMENT_CONTEXT_ENABLED",
+            ),
+            deployment_manifest_file=get("HLB_DEPLOYMENT_MANIFEST_FILE", default=""),
         )
