@@ -8,3 +8,6 @@ provides_hooks:
 provides_tools:
   - hlb_report_work_event
   - hlb_resolve_codex_approval
+  - digital_life_recall
+  - digital_life_research
+  - digital_life_status

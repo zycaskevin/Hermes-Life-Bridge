@@ -116,6 +116,9 @@ class BridgeConfig:
     # Read-only facts about this conversation interface, not a tool grant.
     deployment_context_enabled: bool = False
     deployment_manifest_file: str = ""
+    # Explicit owner-granted, life-scoped native tools. Disabled for other profiles.
+    agent_tools_enabled: bool = False
+    auto_recall_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "BridgeConfig":
@@ -270,4 +273,10 @@ class BridgeConfig:
                 name="HLB_DEPLOYMENT_CONTEXT_ENABLED",
             ),
             deployment_manifest_file=get("HLB_DEPLOYMENT_MANIFEST_FILE", default=""),
+            agent_tools_enabled=_strict_feature_bool(
+                get("HLB_AGENT_TOOLS_ENABLED", default="false"), name="HLB_AGENT_TOOLS_ENABLED"
+            ),
+            auto_recall_enabled=_strict_feature_bool(
+                get("HLB_AUTO_RECALL_ENABLED", default="false"), name="HLB_AUTO_RECALL_ENABLED"
+            ),
         )

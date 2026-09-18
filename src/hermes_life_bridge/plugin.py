@@ -6,6 +6,11 @@ import threading
 import time
 
 from .affect_context import AffectContextProjector
+from .agent_tools import (
+    TOOLSET as LIFE_TOOLSET, TOOL_SCHEMAS as LIFE_TOOL_SCHEMAS,
+    RECALL, RESEARCH, STATUS, tools_enabled, auto_recall_context,
+    recall_handler, research_handler, status_handler,
+)
 from .bridge import HermesLifeBridge
 from .compatibility import CompatibilityEvidenceStore
 from .codex_decision import (
@@ -262,6 +267,13 @@ def on_pre_llm_call(
     **kwargs,
 ):
     turn_context = _turn_context()
+    try:
+        recalled = auto_recall_context(user_message or "", session_id or "")
+        if recalled:
+            turn_context = "\n\n".join(part for part in (turn_context, recalled) if part)
+    except Exception:
+        # Retrieval outages do not break ordinary conversation or fabricate recall.
+        pass
     # Gateway messages are already authoritatively observed by pre_gateway_dispatch.
     # For gateway turns this hook is context-only, avoiding double ingestion while
     # still applying the DLD Developmental Expression Gate to every LLM call.
@@ -326,6 +338,13 @@ def register(ctx):
     register_tool = getattr(ctx, "register_tool", None)
     if callable(register_tool):
         ctx.register_hook("post_tool_call", on_post_tool_call)
+        if BridgeConfig.from_env().agent_tools_enabled:
+            for name, handler in ((RECALL, recall_handler), (RESEARCH, research_handler), (STATUS, status_handler)):
+                register_tool(
+                    name=name, toolset=LIFE_TOOLSET, schema=LIFE_TOOL_SCHEMAS[name],
+                    handler=handler, check_fn=tools_enabled,
+                    description=LIFE_TOOL_SCHEMAS[name]["function"]["description"],
+                )
         register_tool(
             name=REPORT_TOOL_NAME,
             toolset=REPORT_TOOLSET,
