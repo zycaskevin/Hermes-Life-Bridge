@@ -189,3 +189,66 @@ def test_register_native_tools_only_when_explicitly_enabled(tools,monkeypatch):
     ctx=Ctx();plugin.register(ctx)
     assert all(name in ctx.tools for name in m.TOOL_SCHEMAS)
     assert all(ctx.tools[name]['toolset']==m.TOOLSET for name in m.TOOL_SCHEMAS)
+
+
+def test_ledger_additive_consumer_migration_preserves_old_rows_as_unknown(tools):
+    with tools._db() as db:
+        db.execute('drop table calls')
+        db.execute('''create table calls(
+            request_id text primary key, kind text not null, query_hash text not null,
+            session_hash text not null, started real not null, finished real,
+            status text not null, result_json text not null default '{}')''')
+        db.execute("insert into calls values(?,?,?,?,?,?,?,?)",(
+            'dlcall:'+'1'*32,'recall','qhash','shash',1.0,2.0,'completed','{}'))
+    again=m.NativeAgentTools(tools.test_config)
+    with again._db() as db:
+        columns=[r[1] for r in db.execute('pragma table_info(calls)')]
+        row=db.execute('select consumer from calls where request_id=?',('dlcall:'+'1'*32,)).fetchone()
+    assert 'consumer' in columns
+    assert row == ('unknown',)
+
+
+def test_recall_ledger_records_consumer_and_verification_metadata_without_content(tools,monkeypatch):
+    data=retrieval(tools)
+    data['retrieval']['verification']={
+        'allowed':1,'receivedCandidates':3,'uniqueCandidates':2,'suppressed':2,
+    }
+    monkeypatch.setattr(tools,'_http',lambda *a:data)
+    result=tools.recall('private preference topic',session='session-1',consumer='native_tool')
+    assert result['ok'] is True
+    with tools._db() as db:
+        row=db.execute('select consumer,query_hash,session_hash,result_json from calls order by started desc limit 1').fetchone()
+    meta=json.loads(row[3])
+    assert row[0]=='native_tool'
+    assert row[1]==m._digest('private preference topic')
+    assert row[2]==m._digest('session-1')
+    assert meta['candidateCount']==3 and meta['retrievedCount']==1 and meta['suppressedCount']==2
+    assert meta['memoryRefs']==[{'memoryId':'mem_a','revision':1}]
+    serialized=json.dumps(meta)
+    assert 'private preference topic' not in serialized and 'private memory text' not in serialized
+
+
+def test_native_handler_and_auto_context_use_distinct_consumers(tools,monkeypatch):
+    m._CACHE.clear()
+    monkeypatch.setattr(BridgeConfig,'from_env',staticmethod(lambda:tools.test_config))
+    monkeypatch.setattr(m,'NativeAgentTools',lambda cfg:tools)
+    monkeypatch.setattr(tools,'_http',lambda *a:retrieval(tools))
+    assert json.loads(m.recall_handler({'query':'handler topic'},session_id='s'))['ok'] is True
+    assert '<digital-life-retrieved-memory>' in m.auto_recall_context('automatic topic','s2')
+    with tools._db() as db:
+        consumers=dict(db.execute('select query_hash,consumer from calls'))
+    assert consumers[m._digest('handler topic')]=='native_tool'
+    assert consumers[m._digest('automatic topic')]=='auto_context'
+
+
+def test_operator_diagnostic_consumer_cannot_be_model_supplied_but_can_be_internal_kwarg(tools,monkeypatch):
+    monkeypatch.setattr(BridgeConfig,'from_env',staticmethod(lambda:tools.test_config))
+    monkeypatch.setattr(m,'NativeAgentTools',lambda cfg:tools)
+    monkeypatch.setattr(tools,'_http',lambda *a:retrieval(tools))
+    # Tool arguments remain exact-key validated; the model cannot choose a consumer.
+    assert json.loads(m.recall_handler({'query':'topic','consumer':'operator_diagnostic'}))['ok'] is False
+    result=json.loads(m.recall_handler({'query':'topic'},session_id='diag',consumer='operator_diagnostic'))
+    assert result['ok'] is True
+    with tools._db() as db:
+        consumer=db.execute('select consumer from calls order by started desc limit 1').fetchone()[0]
+    assert consumer=='operator_diagnostic'
