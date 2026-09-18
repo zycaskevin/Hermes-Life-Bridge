@@ -33,6 +33,20 @@ MAX_RESPONSE_BYTES = 262144
 _CACHE: dict[tuple[str, str, str], tuple[float, dict[str, Any]]] = {}
 _CACHE_LOCK = threading.Lock()
 _CONSUMERS = {"native_tool", "auto_context", "operator_diagnostic", "direct", "unknown"}
+_SAFE_RESEARCH_FAILURES = {
+    "search_transport_failed",
+    "search_response_too_large",
+    "search_response_invalid",
+    "search_no_results",
+    "no_supported_exploration_runtime",
+    "exploration_budget_exhausted_before_synthesis",
+    "hermes_production_route_unavailable",
+    "hermes_synthesis_timeout",
+    "hermes_synthesis_output_too_large",
+    "hermes_synthesis_verification_invalid",
+    "hermes_synthesis_model_mismatch",
+    "input_file_invalid",
+}
 
 
 def _schema(name: str, description: str, properties: dict, required: list[str]) -> dict:
@@ -100,6 +114,21 @@ def _private_json(path: Path) -> dict:
 
 def _digest(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _public_research_failure(value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        return "internal_failure"
+    if value in _SAFE_RESEARCH_FAILURES:
+        return value
+    if value.startswith("hermes_synthesis_failed"):
+        return "hermes_synthesis_failed"
+    if value in {"research_timeout", "research_process_failed", "research_response_too_large",
+                 "research_receipt_missing", "research_identity_or_receipt_invalid",
+                 "research_provenance_invalid", "research_execution_missing",
+                 "research_sources_invalid", "research_source_scheme", "research_summary_invalid"}:
+        return value
+    return "internal_failure"
 
 
 class _NoRedirect(urlrequest.HTTPRedirectHandler):
@@ -302,9 +331,19 @@ class NativeAgentTools:
                 if prior[1] == "completed":
                     return {**json.loads(prior[2]), "replayed": True}
                 return {"ok": False, "request_id": prior[0], "error": "duplicate_request_" + prior[1]}
-            active = db.execute("select count(*) from calls where kind='research' and status='running'").fetchone()[0]
-            hour = db.execute("select count(*) from calls where kind='research' and started>?", (now - 3600,)).fetchone()[0]
-            day = db.execute("select count(*) from calls where kind='research' and started>?", (now - 86400,)).fetchone()[0]
+            # Operator diagnostics must never consume the owner's research budget.
+            # User-facing research calls remain rate-limited even when they fail.
+            active = db.execute(
+                "select count(*) from calls where kind='research' and status='running' and consumer!='operator_diagnostic'"
+            ).fetchone()[0]
+            hour = db.execute(
+                "select count(*) from calls where kind='research' and consumer!='operator_diagnostic' and started>?",
+                (now - 3600,),
+            ).fetchone()[0]
+            day = db.execute(
+                "select count(*) from calls where kind='research' and consumer!='operator_diagnostic' and started>?",
+                (now - 86400,),
+            ).fetchone()[0]
             if active or hour >= self.policy["researchPerHour"] or day >= self.policy["researchPerDay"]:
                 return {"ok": False, "error": "research_budget_or_concurrency_limit", "executed": False}
             db.execute("insert into calls(request_id,kind,query_hash,session_hash,started,status,consumer) values(?,?,?,?,?,?,?)",
@@ -316,12 +355,29 @@ class NativeAgentTools:
                        "max_tokens": 1000, "max_cost_usd": "0.05"}}
         try:
             raw = self._run_af(intent)
+            if raw.get("status") == "failed":
+                failure_reason = _public_research_failure(raw.get("reason"))
+                result = {"ok": False, "request_id": rid, "status": "failed",
+                          "error": "agent_factory_research_failed", "failure_reason": failure_reason,
+                          "completed": False,
+                          "notice": "No successful research receipt. Do not claim search success or wait for a nonexistent later result."}
+                self._finish(rid, "failed", result)
+                return result
             result = self._verify_research(raw, rid)
             self._finish(rid, "completed", result)
             return result
+        except ToolBoundaryError as exc:
+            result = {"ok": False, "request_id": rid, "status": "failed",
+                      "error": "agent_factory_research_failed",
+                      "failure_reason": _public_research_failure(str(exc)),
+                      "completed": False,
+                      "notice": "No successful research receipt. Do not claim search success or wait for a nonexistent later result."}
+            self._finish(rid, "failed", result)
+            return result
         except Exception:
             result = {"ok": False, "request_id": rid, "status": "failed",
-                      "error": "agent_factory_research_failed", "completed": False,
+                      "error": "agent_factory_research_failed", "failure_reason": "internal_failure",
+                      "completed": False,
                       "notice": "No successful research receipt. Do not claim search success or wait for a nonexistent later result."}
             self._finish(rid, "failed", result)
             return result
@@ -346,13 +402,19 @@ class NativeAgentTools:
                         os.killpg(process.pid, signal.SIGKILL); process.wait()
                     raise ToolBoundaryError("research_timeout")
                 stdout.seek(0); raw = stdout.read(MAX_RESPONSE_BYTES + 1)
-                if process.returncode != 0 or len(raw) > MAX_RESPONSE_BYTES:
-                    raise ToolBoundaryError("research_process_failed")
+                if len(raw) > MAX_RESPONSE_BYTES:
+                    raise ToolBoundaryError("research_response_too_large")
             for line in raw.decode().splitlines()[::-1]:
                 try: item = json.loads(line)
                 except (ValueError, TypeError): continue
-                if isinstance(item, dict) and item.get("schema") == "agent-factory.conversation-research-result.v1":
+                if not isinstance(item, dict):
+                    continue
+                if item.get("schema") == "agent-factory.conversation-research-result.v1":
+                    if process.returncode not in (0, None) and item.get("status") != "failed":
+                        raise ToolBoundaryError("research_process_failed")
                     return item
+            if process.returncode not in (0, None):
+                raise ToolBoundaryError("research_process_failed")
         raise ToolBoundaryError("research_receipt_missing")
 
     def _verify_research(self, item: dict, rid: str) -> dict:

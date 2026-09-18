@@ -127,6 +127,50 @@ def test_research_is_real_receipt_driven_idempotent_and_bounded(tools,monkeypatc
     assert denied['executed'] is False and len(seen)==2
 
 
+def test_failed_af_envelope_preserves_bounded_reason(tools,monkeypatch):
+    monkeypatch.setattr(
+        tools,
+        '_run_af',
+        lambda intent:{
+            'schema':'agent-factory.conversation-research-result.v1',
+            'status':'failed',
+            'reason':'search_transport_failed',
+        },
+    )
+    result=tools.research('agent news',consumer='native_tool')
+    assert result['ok'] is False
+    assert result['error']=='agent_factory_research_failed'
+    assert result['failure_reason']=='search_transport_failed'
+    assert result['completed'] is False
+
+
+def test_unknown_af_failure_reason_is_not_leaked(tools,monkeypatch):
+    monkeypatch.setattr(
+        tools,
+        '_run_af',
+        lambda intent:{
+            'schema':'agent-factory.conversation-research-result.v1',
+            'status':'failed',
+            'reason':'secret/private diagnostic text',
+        },
+    )
+    result=tools.research('agent news',consumer='native_tool')
+    assert result['failure_reason']=='internal_failure'
+    assert 'secret' not in json.dumps(result)
+
+
+def test_operator_diagnostic_does_not_consume_owner_budget(tools,monkeypatch):
+    seen=[]
+    monkeypatch.setattr(tools,'_run_af',lambda x:(seen.append(x) or completed(tools,x['intent_id'])))
+    assert tools.research('diag one',consumer='operator_diagnostic')['ok']
+    assert tools.research('diag two',consumer='operator_diagnostic')['ok']
+    assert tools.research('owner one',consumer='native_tool')['ok']
+    assert tools.research('owner two',consumer='native_tool')['ok']
+    denied=tools.research('owner three',consumer='native_tool')
+    assert denied['executed'] is False
+    assert len(seen)==4
+
+
 def test_bad_research_provenance_does_not_claim_success(tools,monkeypatch):
     def fake(intent):
         data=completed(tools,intent['intent_id']);data['life_did']='did:arthurverse:other';return data
