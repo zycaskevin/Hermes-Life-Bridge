@@ -2,6 +2,7 @@ from hermes_life_bridge import plugin
 from hermes_life_bridge.config import BridgeConfig
 from hermes_life_bridge.codex_decision import CODEX_DECISION_TOOL_NAME
 from hermes_life_bridge.work_producer import REPORT_TOOL_NAME
+from hermes_life_bridge.skill_proposal import TOOL as SKILL_PROPOSAL_TOOL
 
 
 class Ctx:
@@ -19,6 +20,8 @@ class Ctx:
 def _config(
     work_producer_enabled: bool = False,
     codex_decision_enabled: bool = False,
+    agent_tools_enabled: bool = False,
+    skill_proposals_enabled: bool = False,
 ) -> BridgeConfig:
     return BridgeConfig(
         life_did="did:example:life",
@@ -26,6 +29,8 @@ def _config(
         trace_path="/tmp/trace.jsonl",
         work_producer_enabled=work_producer_enabled,
         codex_decision_enabled=codex_decision_enabled,
+        agent_tools_enabled=agent_tools_enabled,
+        skill_proposals_enabled=skill_proposals_enabled,
     )
 
 
@@ -72,6 +77,23 @@ def test_registers_codex_decision_tool_only_when_enabled(monkeypatch):
     assert set(tool["schema"]["function"]["parameters"]["properties"]) == {"decision"}
     assert tool["check_fn"]() is True
     assert ctx.tools[REPORT_TOOL_NAME]["check_fn"]() is False
+
+
+def test_registers_candidate_only_skill_tool_with_life_toolset(monkeypatch):
+    monkeypatch.setattr(
+        plugin.BridgeConfig,
+        "from_env",
+        staticmethod(lambda: _config(False, False, True, True)),
+    )
+    monkeypatch.setattr(plugin, "skill_proposal_enabled", lambda: True)
+    monkeypatch.setattr(plugin, "tools_enabled", lambda: True)
+    ctx = Ctx()
+    plugin.register(ctx)
+    tool = ctx.tools[SKILL_PROPOSAL_TOOL]
+    assert tool["toolset"] == "digital_life"
+    assert tool["schema"]["function"]["name"] == SKILL_PROPOSAL_TOOL
+    assert tool["check_fn"]() is True
+    assert "install" in tool["description"] and "does not" in tool["description"]
 
 
 def test_gateway_hook_always_allows(monkeypatch):

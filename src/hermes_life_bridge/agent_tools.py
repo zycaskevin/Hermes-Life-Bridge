@@ -229,6 +229,7 @@ class NativeAgentTools:
         self.policy = policy
         self.scope = dict(self.manifest["dlmfScope"])
         self.life_did = config.life_did
+        self.skill_proposals_enabled = config.skill_proposals_enabled
         living = _private_json(self.root / "life-runtime/living-runtime-instance.json")
         if living.get("lifeDid") != self.life_did or living.get("digitalLifeId") != self.manifest["digitalLifeId"]:
             raise ToolBoundaryError("living_runtime_scope")
@@ -370,8 +371,12 @@ class NativeAgentTools:
             memory_ready = ready.get("scopeBound") is True and ready.get("scope") == self.scope
         except Exception:
             memory_ready = False
+        native_tools = list(TOOL_SCHEMAS)
+        if self.skill_proposals_enabled:
+            native_tools.append("digital_life_skill_propose")
         return {"ok": True, "lifeDid": self.life_did, "toolPolicy": "governed-readonly",
-                "nativeTools": list(TOOL_SCHEMAS), "memoryAuthority": "DLMF", "memoryReady": memory_ready,
+                "nativeTools": native_tools, "skillProposalPolicy": "candidate-only" if self.skill_proposals_enabled else "disabled",
+                "memoryAuthority": "DLMF", "memoryReady": memory_ready,
                 "phase": dld.get("phase"), "developmentRevision": dld.get("sourceDevelopmentRevision"),
                 "evidence": dld.get("evidence"), "personality": dld.get("personality"),
                 "capabilities": dld.get("capabilities"), "affect": {"revision": affect.get("revision"),

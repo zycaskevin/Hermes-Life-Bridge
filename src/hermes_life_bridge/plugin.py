@@ -11,6 +11,12 @@ from .agent_tools import (
     RECALL, RESEARCH, STATUS, tools_enabled, auto_recall_context,
     recall_handler, research_handler, status_handler,
 )
+from .skill_proposal import (
+    TOOL as SKILL_PROPOSAL_TOOL,
+    TOOL_SCHEMA as SKILL_PROPOSAL_SCHEMA,
+    enabled as skill_proposal_enabled,
+    handler as skill_proposal_handler,
+)
 from .bridge import HermesLifeBridge
 from .compatibility import CompatibilityEvidenceStore
 from .codex_decision import (
@@ -345,6 +351,14 @@ def register(ctx):
                     handler=handler, check_fn=tools_enabled,
                     description=LIFE_TOOL_SCHEMAS[name]["function"]["description"],
                 )
+            register_tool(
+                name=SKILL_PROPOSAL_TOOL,
+                toolset=LIFE_TOOLSET,
+                schema=SKILL_PROPOSAL_SCHEMA,
+                handler=skill_proposal_handler,
+                check_fn=skill_proposal_enabled,
+                description=SKILL_PROPOSAL_SCHEMA["function"]["description"],
+            )
         register_tool(
             name=REPORT_TOOL_NAME,
             toolset=REPORT_TOOLSET,
