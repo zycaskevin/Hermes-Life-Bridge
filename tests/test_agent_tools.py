@@ -144,6 +144,34 @@ def test_research_is_real_receipt_driven_idempotent_and_bounded(tools,monkeypatc
     assert denied['executed'] is False and len(seen)==2
 
 
+def test_research_preserves_provider_actual_cost_evidence(tools,monkeypatch):
+    def fake(intent):
+        data=completed(tools,intent['intent_id'])
+        data['budget_gate'].update({
+            'actual_cost_usd':'0.00925',
+            'actual_cost_status':'PROVIDER_REPORTED',
+            'spend_compliance':'WITHIN_BOUND',
+        })
+        data['usage']={
+            'available':True,'provider':'openrouter','model':'openai/gpt-5.6-sol',
+            'input_tokens':50,'output_tokens':20,'total_tokens':70,
+            'estimated_cost_usd':'0.010','actual_cost_usd':'0.00925',
+            'actual_cost_status':'PROVIDER_REPORTED','cost_source':'openrouter_response_usage',
+            'provider_generation_id':'gen-test-actual',
+            'reconciliation_status':'RECONCILED_PROVIDER_RESPONSE',
+        }
+        return data
+    monkeypatch.setattr(tools,'_run_af',fake)
+    result=tools.research('actual cost topic',consumer='native_tool')
+    assert result['ok'] is True
+    assert result['budgetGate']['actualCostUsd']=='0.00925'
+    assert result['budgetGate']['actualCostStatus']=='PROVIDER_REPORTED'
+    assert result['budgetGate']['spendCompliance']=='WITHIN_BOUND'
+    assert result['usage']['actualCostUsd']=='0.00925'
+    assert result['usage']['providerGenerationId']=='gen-test-actual'
+    assert result['usage']['reconciliationStatus']=='RECONCILED_PROVIDER_RESPONSE'
+
+
 def test_failed_af_envelope_preserves_bounded_reason(tools,monkeypatch):
     monkeypatch.setattr(
         tools,
