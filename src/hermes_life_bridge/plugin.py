@@ -344,13 +344,15 @@ def register(ctx):
     register_tool = getattr(ctx, "register_tool", None)
     if callable(register_tool):
         ctx.register_hook("post_tool_call", on_post_tool_call)
-        if BridgeConfig.from_env().agent_tools_enabled:
+        config = BridgeConfig.from_env()
+        if config.agent_tools_enabled:
             for name, handler in ((RECALL, recall_handler), (RESEARCH, research_handler), (STATUS, status_handler)):
                 register_tool(
                     name=name, toolset=LIFE_TOOLSET, schema=LIFE_TOOL_SCHEMAS[name],
                     handler=handler, check_fn=tools_enabled,
                     description=LIFE_TOOL_SCHEMAS[name]["function"]["description"],
                 )
+        if config.skill_proposals_enabled:
             register_tool(
                 name=SKILL_PROPOSAL_TOOL,
                 toolset=LIFE_TOOLSET,

@@ -122,6 +122,9 @@ class BridgeConfig:
     # Candidate-only procedural skill proposals. This does not enable native
     # Hermes skill_manage or install/activate any runtime skill.
     skill_proposals_enabled: bool = False
+    # Existing-resident profiles (for example Nancy's global Hermes) may bind
+    # only the proposal queue without provisioning a second conversation runtime.
+    skill_proposal_binding_file: str = ""
 
     @classmethod
     def from_env(cls) -> "BridgeConfig":
@@ -284,5 +287,9 @@ class BridgeConfig:
             ),
             skill_proposals_enabled=_strict_feature_bool(
                 get("HLB_SKILL_PROPOSALS_ENABLED", default="false"), name="HLB_SKILL_PROPOSALS_ENABLED"
+            ),
+            skill_proposal_binding_file=get(
+                "HLB_SKILL_PROPOSAL_BINDING_FILE",
+                default="",
             ),
         )

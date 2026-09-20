@@ -79,14 +79,13 @@ def test_registers_codex_decision_tool_only_when_enabled(monkeypatch):
     assert ctx.tools[REPORT_TOOL_NAME]["check_fn"]() is False
 
 
-def test_registers_candidate_only_skill_tool_with_life_toolset(monkeypatch):
+def test_registers_candidate_only_skill_tool_without_other_agent_tools(monkeypatch):
     monkeypatch.setattr(
         plugin.BridgeConfig,
         "from_env",
-        staticmethod(lambda: _config(False, False, True, True)),
+        staticmethod(lambda: _config(False, False, False, True)),
     )
     monkeypatch.setattr(plugin, "skill_proposal_enabled", lambda: True)
-    monkeypatch.setattr(plugin, "tools_enabled", lambda: True)
     ctx = Ctx()
     plugin.register(ctx)
     tool = ctx.tools[SKILL_PROPOSAL_TOOL]
@@ -94,6 +93,7 @@ def test_registers_candidate_only_skill_tool_with_life_toolset(monkeypatch):
     assert tool["schema"]["function"]["name"] == SKILL_PROPOSAL_TOOL
     assert tool["check_fn"]() is True
     assert "install" in tool["description"] and "does not" in tool["description"]
+    assert not {"digital_life_recall", "digital_life_research", "digital_life_status"}.intersection(ctx.tools)
 
 
 def test_gateway_hook_always_allows(monkeypatch):

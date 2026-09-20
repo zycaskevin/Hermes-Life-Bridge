@@ -23,6 +23,7 @@ TOOLSET = "digital_life"
 TOOL = "digital_life_skill_propose"
 POLICY_SCHEMA = "hlb.digital-life-skill-proposals.v1"
 PROPOSAL_SCHEMA = "digital-life.skill-proposal.v1"
+RESIDENT_BINDING_SCHEMA = "digital-life-stack.resident-skill-binding.v1"
 _NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _CAPABILITY = re.compile(r"[a-z0-9]+(?:[._:-][a-z0-9]+)*\Z")
 _BLOCKED_TEXT = (
@@ -122,18 +123,145 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _canonical_hash(value: dict[str, Any]) -> str:
+    raw = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def _absolute_regular(path: Path, label: str, *, private: bool) -> Path:
+    if not path.is_absolute() or ".." in path.parts:
+        raise SkillProposalBoundaryError(label + "_invalid")
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | os.O_CLOEXEC)
+    try:
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_nlink != 1
+            or info.st_mode & 0o022
+            or (private and info.st_mode & 0o077)
+        ):
+            raise SkillProposalBoundaryError(label + "_untrusted")
+    finally:
+        os.close(fd)
+    return path
+
+
+def _load_resident_binding(config: BridgeConfig) -> tuple[dict[str, Any], Path]:
+    path = Path(config.skill_proposal_binding_file)
+    value = _private_json(path)
+    expected = {
+        "schema",
+        "digitalLifeId",
+        "lifeDid",
+        "runtimeId",
+        "bindingMode",
+        "proposalToolPolicy",
+        "hermes",
+        "lifetimeHub",
+        "identityRoot",
+        "developmentEvidence",
+        "manifestHash",
+    }
+    if set(value) != expected:
+        raise SkillProposalBoundaryError("resident_binding_fields")
+    body = {k: v for k, v in value.items() if k != "manifestHash"}
+    if (
+        value.get("schema") != RESIDENT_BINDING_SCHEMA
+        or value.get("lifeDid") != config.life_did
+        or value.get("runtimeId") != "hermes"
+        or value.get("bindingMode") != "existing-resident"
+        or value.get("proposalToolPolicy") != "candidate-only"
+        or value.get("manifestHash") != _canonical_hash(body)
+    ):
+        raise SkillProposalBoundaryError("resident_binding_invalid")
+    digital_life_id = _text(value.get("digitalLifeId"), "digital_life_id", 128)
+    hermes = value.get("hermes")
+    lifetime = value.get("lifetimeHub")
+    identity = value.get("identityRoot")
+    development = value.get("developmentEvidence")
+    if not all(isinstance(item, dict) for item in (hermes, lifetime, identity, development)):
+        raise SkillProposalBoundaryError("resident_binding_nested_invalid")
+    if set(hermes) != {"home", "stateDb"}:
+        raise SkillProposalBoundaryError("resident_hermes_fields")
+    home = Path(_text(hermes.get("home"), "hermes_home", 2048))
+    state_db = Path(_text(hermes.get("stateDb"), "hermes_state_db", 2048))
+    if not home.is_absolute() or home.is_symlink() or state_db != home / "state.db":
+        raise SkillProposalBoundaryError("resident_hermes_binding_invalid")
+    home_info = home.stat()
+    if (
+        not home_info.st_uid == os.getuid()
+        or not stat.S_ISDIR(home_info.st_mode)
+        or home_info.st_mode & 0o022
+    ):
+        raise SkillProposalBoundaryError("resident_hermes_home_untrusted")
+    _absolute_regular(state_db, "resident_hermes_state", private=True)
+    if set(lifetime) != {
+        "database", "companionId", "genesisHash", "schemaProfile"
+    }:
+        raise SkillProposalBoundaryError("resident_lifetime_fields")
+    lifetime_db = Path(_text(lifetime.get("database"), "lifetime_db", 2048))
+    _absolute_regular(lifetime_db, "resident_lifetime_db", private=False)
+    if lifetime.get("schemaProfile") != "legacy-continuity-v1":
+        raise SkillProposalBoundaryError("resident_lifetime_schema_profile")
+    companion_id = _text(lifetime.get("companionId"), "companion_id", 128)
+    genesis_hash = _text(lifetime.get("genesisHash"), "genesis_hash", 128)
+    if not re.fullmatch(r"[0-9a-f]{64}", genesis_hash):
+        raise SkillProposalBoundaryError("resident_genesis_hash_invalid")
+    if set(identity) != {"rootHash", "subjectId", "displayName"}:
+        raise SkillProposalBoundaryError("resident_identity_fields")
+    root_hash = _text(identity.get("rootHash"), "identity_root_hash", 128)
+    if not re.fullmatch(r"[0-9a-f]{64}", root_hash):
+        raise SkillProposalBoundaryError("resident_identity_root_hash_invalid")
+    _text(identity.get("subjectId"), "identity_subject_id", 128)
+    _text(identity.get("displayName"), "identity_display_name", 256)
+    if set(development) != {"status", "reason"}:
+        raise SkillProposalBoundaryError("resident_development_fields")
+    if development.get("status") != "BLOCKED":
+        raise SkillProposalBoundaryError("resident_development_status")
+    _text(development.get("reason"), "resident_development_reason", 256)
+    root = path.parent.absolute()
+    if root.is_symlink():
+        raise SkillProposalBoundaryError("resident_binding_root_symlink")
+    info = root.stat()
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_mode & 0o077
+    ):
+        raise SkillProposalBoundaryError("resident_binding_root_untrusted")
+    proposal_root = root / "skill-proposals"
+    return {
+        **value,
+        "digitalLifeId": digital_life_id,
+        "_proposalRoot": str(proposal_root),
+        "_companionId": companion_id,
+    }, root
+
+
 class SkillProposalTool:
     def __init__(self, config: BridgeConfig):
-        if not config.agent_tools_enabled or not config.skill_proposals_enabled:
+        if not config.skill_proposals_enabled:
             raise SkillProposalBoundaryError("skill_proposals_disabled")
-        if not config.deployment_manifest_file:
-            raise SkillProposalBoundaryError("deployment_manifest_missing")
-        self.manifest = load_runtime_manifest(config.life_did, config.deployment_manifest_file)
-        if self.manifest["hermes"].get("toolPolicy") != "governed-readonly":
-            raise SkillProposalBoundaryError("tool_policy_not_granted")
-        self.root = Path(config.deployment_manifest_file).parent.resolve()
         self.life_did = config.life_did
-        self.digital_life_id = self.manifest["digitalLifeId"]
+        if config.skill_proposal_binding_file:
+            self.manifest, self.root = _load_resident_binding(config)
+            self.digital_life_id = self.manifest["digitalLifeId"]
+        else:
+            if not config.agent_tools_enabled:
+                raise SkillProposalBoundaryError("skill_proposals_require_agent_tools_or_resident_binding")
+            if not config.deployment_manifest_file:
+                raise SkillProposalBoundaryError("deployment_manifest_missing")
+            self.manifest = load_runtime_manifest(config.life_did, config.deployment_manifest_file)
+            if self.manifest["hermes"].get("toolPolicy") != "governed-readonly":
+                raise SkillProposalBoundaryError("tool_policy_not_granted")
+            self.root = Path(config.deployment_manifest_file).parent.resolve()
+            self.digital_life_id = self.manifest["digitalLifeId"]
         policy = _private_json(self.root / "skill-proposals-policy.json")
         if set(policy) != {
             "schema", "digitalLifeId", "lifeDid", "allowedCapabilityIds",

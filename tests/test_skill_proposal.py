@@ -50,6 +50,55 @@ def config_for(root: Path) -> BridgeConfig:
     )
 
 
+def resident_config_for(root: Path) -> BridgeConfig:
+    binding_root = root / "resident"; binding_root.mkdir(mode=0o700)
+    hermes = root / "global-hermes"; hermes.mkdir(mode=0o700)
+    private(hermes / "state.db", {"fixture": True})
+    lifetime = root / "lifetime.sqlite3"; private(lifetime, {"fixture": True}); lifetime.chmod(0o644)
+    body = {
+        "schema": m.RESIDENT_BINDING_SCHEMA,
+        "digitalLifeId": "dl_resident",
+        "lifeDid": DID,
+        "runtimeId": "hermes",
+        "bindingMode": "existing-resident",
+        "proposalToolPolicy": "candidate-only",
+        "hermes": {"home": str(hermes), "stateDb": str(hermes / "state.db")},
+        "lifetimeHub": {
+            "database": str(lifetime),
+            "companionId": "companion-resident",
+            "genesisHash": "a" * 64,
+            "schemaProfile": "legacy-continuity-v1",
+        },
+        "identityRoot": {
+            "rootHash": "b" * 64,
+            "subjectId": "resident",
+            "displayName": "Resident",
+        },
+        "developmentEvidence": {
+            "status": "BLOCKED",
+            "reason": "legacy-lifetime-hub-no-agent-definition",
+        },
+    }
+    body["manifestHash"] = m._canonical_hash(body)
+    private(binding_root / "resident-skill-binding.json", body)
+    private(binding_root / "skill-proposals-policy.json", {
+        "schema": m.POLICY_SCHEMA,
+        "digitalLifeId": "dl_resident",
+        "lifeDid": DID,
+        "allowedCapabilityIds": ["procedural.assistance"],
+        "maxInstructionsBytes": 2048,
+        "maxPending": 3,
+    })
+    return BridgeConfig(
+        life_did=DID,
+        runtime_socket="unused",
+        trace_path="unused",
+        agent_tools_enabled=False,
+        skill_proposals_enabled=True,
+        skill_proposal_binding_file=str(binding_root / "resident-skill-binding.json"),
+    )
+
+
 def proposal():
     return {
         "name": "evidence-review",
@@ -57,6 +106,61 @@ def proposal():
         "instructions": "Check completion first. Then check verification. State uncertainty if either is missing.",
         "capability_id": "procedural.assistance",
     }
+
+
+def test_existing_resident_can_propose_without_enabling_other_agent_tools(tmp_path):
+    root = tmp_path / "fixture"; root.mkdir(mode=0o700)
+    cfg = resident_config_for(root)
+    assert cfg.agent_tools_enabled is False
+    tool = m.SkillProposalTool(cfg)
+    result = tool.propose(
+        {**proposal(), "capability_id": "procedural.assistance"},
+        session_id="resident-session",
+        turn_id="resident-turn",
+    )
+    assert result["ok"] is True
+    assert result["candidateActive"] is False and result["skillInstalled"] is False
+    stored = json.loads(next((root / "resident/skill-proposals/pending").glob("*.json")).read_text())
+    assert stored["lifeDid"] == DID
+    assert stored["digitalLifeId"] == "dl_resident"
+    assert stored["sourceSessionId"] == "resident-session"
+    assert stored["evidenceStatus"] == "PENDING_DLMF_REFERENCE"
+
+
+def test_resident_binding_rejects_cross_life_ready_development_and_path_tamper(tmp_path):
+    for mode in ("life", "development", "state-path"):
+        root = tmp_path / mode; root.mkdir(mode=0o700)
+        cfg = resident_config_for(root)
+        path = Path(cfg.skill_proposal_binding_file)
+        value = json.loads(path.read_text())
+        if mode == "life":
+            value["lifeDid"] = "did:arthurverse:other"
+        elif mode == "development":
+            value["developmentEvidence"]["status"] = "READY"
+        else:
+            value["hermes"]["stateDb"] = str(root / "not-state.db")
+        body = {k: v for k, v in value.items() if k != "manifestHash"}
+        value["manifestHash"] = m._canonical_hash(body)
+        private(path, value)
+        with pytest.raises(m.SkillProposalBoundaryError):
+            m.SkillProposalTool(cfg)
+
+
+def test_resident_binding_requires_private_manifest_and_nonwritable_authority_files(tmp_path):
+    root = tmp_path / "fixture"; root.mkdir(mode=0o700)
+    cfg = resident_config_for(root)
+    path = Path(cfg.skill_proposal_binding_file)
+    path.chmod(0o644)
+    with pytest.raises(m.SkillProposalBoundaryError):
+        m.SkillProposalTool(cfg)
+
+    root2 = tmp_path / "writable"; root2.mkdir(mode=0o700)
+    cfg2 = resident_config_for(root2)
+    binding = json.loads(Path(cfg2.skill_proposal_binding_file).read_text())
+    lifetime = Path(binding["lifetimeHub"]["database"])
+    lifetime.chmod(0o666)
+    with pytest.raises(m.SkillProposalBoundaryError, match="resident_lifetime_db_untrusted"):
+        m.SkillProposalTool(cfg2)
 
 
 def test_candidate_only_proposal_is_private_and_idempotent(tmp_path, monkeypatch):
