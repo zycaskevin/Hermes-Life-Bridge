@@ -119,6 +119,9 @@ class BridgeConfig:
     # Explicit owner-granted, life-scoped native tools. Disabled for other profiles.
     agent_tools_enabled: bool = False
     auto_recall_enabled: bool = False
+    # Existing-resident memory-only recall may bind directly to a DLS/DLMF
+    # owner-private memory-binding manifest without granting native tools.
+    memory_recall_binding_file: str = ""
     # Candidate-only procedural skill proposals. This does not enable native
     # Hermes skill_manage or install/activate any runtime skill.
     skill_proposals_enabled: bool = False
@@ -284,6 +287,10 @@ class BridgeConfig:
             ),
             auto_recall_enabled=_strict_feature_bool(
                 get("HLB_AUTO_RECALL_ENABLED", default="false"), name="HLB_AUTO_RECALL_ENABLED"
+            ),
+            memory_recall_binding_file=get(
+                "HLB_MEMORY_RECALL_BINDING_FILE",
+                default="",
             ),
             skill_proposals_enabled=_strict_feature_bool(
                 get("HLB_SKILL_PROPOSALS_ENABLED", default="false"), name="HLB_SKILL_PROPOSALS_ENABLED"
