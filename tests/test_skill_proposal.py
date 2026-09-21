@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -53,7 +54,25 @@ def config_for(root: Path) -> BridgeConfig:
 def resident_config_for(root: Path) -> BridgeConfig:
     binding_root = root / "resident"; binding_root.mkdir(mode=0o700)
     hermes = root / "global-hermes"; hermes.mkdir(mode=0o700)
-    private(hermes / "state.db", {"fixture": True})
+    state_db = hermes / "state.db"
+    with sqlite3.connect(state_db) as db:
+        db.execute("""create table sessions(
+            id text primary key, source text, user_id text, chat_id text,
+            chat_type text, hidden integer default 0
+        )""")
+        db.execute("""create table messages(
+            id integer primary key autoincrement, session_id text, role text,
+            content text, active integer default 1
+        )""")
+        db.execute(
+            "insert into sessions(id,source,user_id,chat_id,chat_type,hidden) values (?,?,?,?,?,0)",
+            ("resident-session", "feishu", "resident-owner", "resident-chat", "dm"),
+        )
+        db.execute(
+            "insert into messages(session_id,role,content,active) values (?,?,?,1)",
+            ("resident-session", "user", "real user fixture"),
+        )
+    state_db.chmod(0o600)
     lifetime = root / "lifetime.sqlite3"; private(lifetime, {"fixture": True}); lifetime.chmod(0o644)
     body = {
         "schema": m.RESIDENT_BINDING_SCHEMA,
@@ -88,6 +107,19 @@ def resident_config_for(root: Path) -> BridgeConfig:
         "allowedCapabilityIds": ["procedural.assistance"],
         "maxInstructionsBytes": 2048,
         "maxPending": 3,
+    })
+    real_body = {
+        "schema": m.REAL_CONVERSATION_POLICY_SCHEMA,
+        "requireUserMessage": True,
+        "sources": [{
+            "source": "feishu",
+            "chatTypes": ["dm"],
+            "userIdSha256": ["sha256:" + hashlib.sha256(b"resident-owner").hexdigest()],
+        }],
+    }
+    private(binding_root / "real-conversation-policy.json", {
+        **real_body,
+        "policyHash": m._canonical_hash(real_body),
     })
     return BridgeConfig(
         life_did=DID,
@@ -125,6 +157,59 @@ def test_existing_resident_can_propose_without_enabling_other_agent_tools(tmp_pa
     assert stored["digitalLifeId"] == "dl_resident"
     assert stored["sourceSessionId"] == "resident-session"
     assert stored["evidenceStatus"] == "PENDING_DLMF_REFERENCE"
+
+
+def test_existing_resident_rejects_cron_non_owner_and_missing_user_message(tmp_path):
+    for mode in ("cron", "other-user", "no-user-message"):
+        root = tmp_path / mode; root.mkdir(mode=0o700)
+        cfg = resident_config_for(root)
+        binding = json.loads(Path(cfg.skill_proposal_binding_file).read_text())
+        state_db = Path(binding["hermes"]["stateDb"])
+        with sqlite3.connect(state_db) as db:
+            if mode == "cron":
+                db.execute(
+                    "update sessions set source='cron', chat_type=null, user_id=null where id='resident-session'"
+                )
+            elif mode == "other-user":
+                db.execute(
+                    "update sessions set user_id='not-owner' where id='resident-session'"
+                )
+            else:
+                db.execute("delete from messages where session_id='resident-session'")
+        tool = m.SkillProposalTool(cfg)
+        with pytest.raises(m.SkillProposalBoundaryError):
+            tool.propose(
+                {**proposal(), "capability_id": "procedural.assistance"},
+                session_id="resident-session",
+                turn_id="resident-turn",
+            )
+        pending = root / "resident/skill-proposals/pending"
+        assert list(pending.glob("*.json")) == []
+
+
+def test_resident_real_conversation_policy_is_required_private_and_hash_bound(tmp_path):
+    root = tmp_path / "missing"; root.mkdir(mode=0o700)
+    cfg = resident_config_for(root)
+    policy = root / "resident/real-conversation-policy.json"
+    policy.unlink()
+    with pytest.raises(m.SkillProposalBoundaryError):
+        m.SkillProposalTool(cfg)
+
+    root2 = tmp_path / "public"; root2.mkdir(mode=0o700)
+    cfg2 = resident_config_for(root2)
+    policy2 = root2 / "resident/real-conversation-policy.json"
+    policy2.chmod(0o644)
+    with pytest.raises(m.SkillProposalBoundaryError):
+        m.SkillProposalTool(cfg2)
+
+    root3 = tmp_path / "tamper"; root3.mkdir(mode=0o700)
+    cfg3 = resident_config_for(root3)
+    policy3 = root3 / "resident/real-conversation-policy.json"
+    value = json.loads(policy3.read_text())
+    value["sources"][0]["userIdSha256"] = ["sha256:" + "0" * 64]
+    private(policy3, value)
+    with pytest.raises(m.SkillProposalBoundaryError, match="real_conversation_policy_invalid"):
+        m.SkillProposalTool(cfg3)
 
 
 def test_resident_binding_rejects_cross_life_ready_development_and_path_tamper(tmp_path):

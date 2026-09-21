@@ -11,6 +11,7 @@ import json
 import os
 import re
 import secrets
+import sqlite3
 import stat
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,8 @@ TOOL = "digital_life_skill_propose"
 POLICY_SCHEMA = "hlb.digital-life-skill-proposals.v1"
 PROPOSAL_SCHEMA = "digital-life.skill-proposal.v1"
 RESIDENT_BINDING_SCHEMA = "digital-life-stack.resident-skill-binding.v1"
+REAL_CONVERSATION_POLICY_SCHEMA = "digital-life-stack.real-conversation-source-policy.v1"
+_SHA256_REF = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _CAPABILITY = re.compile(r"[a-z0-9]+(?:[._:-][a-z0-9]+)*\Z")
 _BLOCKED_TEXT = (
@@ -244,14 +247,109 @@ def _load_resident_binding(config: BridgeConfig) -> tuple[dict[str, Any], Path]:
     }, root
 
 
+def _load_real_conversation_policy(root: Path) -> dict[str, Any]:
+    try:
+        policy = _private_json(root / "real-conversation-policy.json")
+    except OSError as exc:
+        raise SkillProposalBoundaryError("real_conversation_policy_unavailable") from exc
+    if set(policy) != {"schema", "requireUserMessage", "sources", "policyHash"}:
+        raise SkillProposalBoundaryError("real_conversation_policy_fields")
+    body = {key: item for key, item in policy.items() if key != "policyHash"}
+    if (
+        policy.get("schema") != REAL_CONVERSATION_POLICY_SCHEMA
+        or policy.get("requireUserMessage") is not True
+        or policy.get("policyHash") != _canonical_hash(body)
+        or not isinstance(policy.get("sources"), list)
+        or not policy["sources"]
+    ):
+        raise SkillProposalBoundaryError("real_conversation_policy_invalid")
+    normalized: list[dict[str, Any]] = []
+    for item in policy["sources"]:
+        if not isinstance(item, dict):
+            raise SkillProposalBoundaryError("real_conversation_source_rule_invalid")
+        if set(item) - {"source", "chatTypes", "userIdSha256", "chatIdSha256"}:
+            raise SkillProposalBoundaryError("real_conversation_source_rule_fields")
+        source = _text(item.get("source"), "real_source", 64)
+        chats = item.get("chatTypes")
+        if not isinstance(chats, list) or chats != ["dm"]:
+            raise SkillProposalBoundaryError("real_conversation_chat_types_invalid")
+        user_hashes = item.get("userIdSha256", [])
+        chat_hashes = item.get("chatIdSha256", [])
+        for values in (user_hashes, chat_hashes):
+            if (
+                not isinstance(values, list)
+                or any(not isinstance(value, str) or _SHA256_REF.fullmatch(value) is None for value in values)
+            ):
+                raise SkillProposalBoundaryError("real_conversation_identity_hash_invalid")
+        if not user_hashes and not chat_hashes:
+            raise SkillProposalBoundaryError("real_conversation_identity_binding_missing")
+        normalized.append({
+            "source": source,
+            "chatTypes": tuple(chats),
+            "userIdSha256": frozenset(user_hashes),
+            "chatIdSha256": frozenset(chat_hashes),
+        })
+    return {"policyHash": policy["policyHash"], "sources": tuple(normalized)}
+
+
+def _assert_real_resident_session(state_db: Path, policy: dict[str, Any], session_id: str) -> None:
+    session = _text(session_id, "session_id", 256)
+    uri = state_db.as_uri() + "?mode=ro"
+    try:
+        with sqlite3.connect(uri, uri=True) as db:
+            db.row_factory = sqlite3.Row
+            rows = db.execute(
+                "select id,source,user_id,chat_id,chat_type,hidden from sessions where id=?",
+                (session,),
+            ).fetchall()
+            if len(rows) != 1:
+                raise SkillProposalBoundaryError("resident_source_session_missing")
+            row = rows[0]
+            if bool(row["hidden"]):
+                raise SkillProposalBoundaryError("resident_source_session_hidden")
+            source = _text(row["source"], "resident_session_source", 64)
+            chat_type = _text(row["chat_type"], "resident_session_chat_type", 32)
+            matches = [
+                item for item in policy["sources"]
+                if item["source"] == source and chat_type in item["chatTypes"]
+            ]
+            if len(matches) != 1:
+                raise SkillProposalBoundaryError("resident_source_not_real_conversation")
+            rule = matches[0]
+            if rule["userIdSha256"]:
+                user_id = row["user_id"]
+                if not isinstance(user_id, str) or "sha256:" + _hash(user_id) not in rule["userIdSha256"]:
+                    raise SkillProposalBoundaryError("resident_source_user_not_allowlisted")
+            if rule["chatIdSha256"]:
+                chat_id = row["chat_id"]
+                if chat_id is None or "sha256:" + _hash(str(chat_id)) not in rule["chatIdSha256"]:
+                    raise SkillProposalBoundaryError("resident_source_chat_not_allowlisted")
+            user_messages = int(
+                db.execute(
+                    """select count(*) from messages
+                       where session_id=? and role='user' and active=1
+                       and content is not null and length(trim(content))>0""",
+                    (session,),
+                ).fetchone()[0]
+            )
+            if user_messages < 1:
+                raise SkillProposalBoundaryError("resident_source_has_no_user_message")
+    except sqlite3.Error as exc:
+        raise SkillProposalBoundaryError("resident_source_session_unavailable") from exc
+
+
 class SkillProposalTool:
     def __init__(self, config: BridgeConfig):
         if not config.skill_proposals_enabled:
             raise SkillProposalBoundaryError("skill_proposals_disabled")
         self.life_did = config.life_did
+        self._resident_state_db: Path | None = None
+        self._real_conversation_policy: dict[str, Any] | None = None
         if config.skill_proposal_binding_file:
             self.manifest, self.root = _load_resident_binding(config)
             self.digital_life_id = self.manifest["digitalLifeId"]
+            self._resident_state_db = Path(self.manifest["hermes"]["stateDb"])
+            self._real_conversation_policy = _load_real_conversation_policy(self.root)
         else:
             if not config.agent_tools_enabled:
                 raise SkillProposalBoundaryError("skill_proposals_require_agent_tools_or_resident_binding")
@@ -298,6 +396,14 @@ class SkillProposalTool:
             raise SkillProposalBoundaryError("arguments_invalid")
         session_id = _text(session_id, "session_id", 256)
         turn_id = _text(turn_id, "turn_id", 256)
+        if self._resident_state_db is not None:
+            if self._real_conversation_policy is None:
+                raise SkillProposalBoundaryError("real_conversation_policy_missing")
+            _assert_real_resident_session(
+                self._resident_state_db,
+                self._real_conversation_policy,
+                session_id,
+            )
         name = _safe_id(args["name"], _NAME, "name", 64)
         capability_id = _safe_id(args["capability_id"], _CAPABILITY, "capability_id", 128)
         if capability_id not in self.allowed_capabilities:
