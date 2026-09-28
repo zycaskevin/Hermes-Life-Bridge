@@ -119,6 +119,7 @@ class BridgeConfig:
     # Explicit owner-granted, life-scoped native tools. Disabled for other profiles.
     agent_tools_enabled: bool = False
     auto_recall_enabled: bool = False
+    memory_recall_timeout_seconds: float = 5.0
     # Existing-resident memory-only recall may bind directly to a DLS/DLMF
     # owner-private memory-binding manifest without granting native tools.
     memory_recall_binding_file: str = ""
@@ -287,6 +288,12 @@ class BridgeConfig:
             ),
             auto_recall_enabled=_strict_feature_bool(
                 get("HLB_AUTO_RECALL_ENABLED", default="false"), name="HLB_AUTO_RECALL_ENABLED"
+            ),
+            memory_recall_timeout_seconds=_bounded_seconds(
+                get("HLB_MEMORY_RECALL_TIMEOUT_SECONDS", default="5"),
+                name="HLB_MEMORY_RECALL_TIMEOUT_SECONDS",
+                minimum=1.0,
+                maximum=15.0,
             ),
             memory_recall_binding_file=get(
                 "HLB_MEMORY_RECALL_BINDING_FILE",

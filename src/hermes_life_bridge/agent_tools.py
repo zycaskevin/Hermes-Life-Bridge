@@ -881,7 +881,12 @@ def auto_recall_context(query: str, session: str = "", *, consumer: str = "auto_
                 if config.agent_tools_enabled
                 else MemoryOnlyRecallClient(config)
             )
-            result = client.recall(query, session=session, timeout=3, consumer=consumer)
+            result = client.recall(
+                query,
+                session=session,
+                timeout=config.memory_recall_timeout_seconds,
+                consumer=consumer,
+            )
         except Exception:
             result = {"ok": False, "error": "auto_recall_unavailable", "memories": []}
         with _CACHE_LOCK:
