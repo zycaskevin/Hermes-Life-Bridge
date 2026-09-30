@@ -337,6 +337,15 @@ def on_post_tool_call(
 def register(ctx):
     ctx.register_hook("pre_gateway_dispatch", on_pre_gateway_dispatch)
     ctx.register_hook("pre_llm_call", on_pre_llm_call)
+    # The native-effect budget middleware is inert for ordinary turns and only
+    # activates when a trusted /v1/runs execution context carries the AF schema.
+    # Register it independently of user-visible Digital Life tools: it is an
+    # execution safety boundary, not a capability grant.
+    register_middleware = getattr(ctx, "register_middleware", None)
+    if callable(register_middleware):
+        from .native_effect_budget_middleware import on_llm_execution, on_tool_execution
+        register_middleware("llm_execution", on_llm_execution)
+        register_middleware("tool_execution", on_tool_execution)
     # Real modern PluginContext has register_tool(). Keep older/minimal hook-only
     # contexts loadable rather than failing the entire bridge during compatibility
     # probes. On modern Hermes the observer/tool contract is stable; while the
@@ -344,15 +353,21 @@ def register(ctx):
     register_tool = getattr(ctx, "register_tool", None)
     if callable(register_tool):
         ctx.register_hook("post_tool_call", on_post_tool_call)
-        config = BridgeConfig.from_env()
-        if config.agent_tools_enabled:
+        try:
+            config = BridgeConfig.from_env()
+        except Exception:
+            # Invalid optional settings must not prevent the bridge's stable
+            # hooks/report tools from loading. Feature-specific check_fns remain
+            # fail-closed, and no optional Digital Life tool is granted here.
+            config = None
+        if config is not None and config.agent_tools_enabled:
             for name, handler in ((RECALL, recall_handler), (RESEARCH, research_handler), (STATUS, status_handler)):
                 register_tool(
                     name=name, toolset=LIFE_TOOLSET, schema=LIFE_TOOL_SCHEMAS[name],
                     handler=handler, check_fn=tools_enabled,
                     description=LIFE_TOOL_SCHEMAS[name]["function"]["description"],
                 )
-        if config.skill_proposals_enabled:
+        if config is not None and config.skill_proposals_enabled:
             register_tool(
                 name=SKILL_PROPOSAL_TOOL,
                 toolset=LIFE_TOOLSET,
