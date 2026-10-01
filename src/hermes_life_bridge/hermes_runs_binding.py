@@ -75,7 +75,7 @@ class HermesRunsNativePort:
                  evidence, authority_verifier, resolve_governed: Callable,
                  origin: str, accept_output: Callable | None = None,
                  capacity: int = 128, answer_ttl_seconds: float = 120,
-                 submission_gate=None):
+                 submission_gate=None, accept_runtime_receipt: Callable | None = None):
         self.contract, self.projection = _contracts()
         try:
             self.af_native = importlib.import_module('agent_factory.runtimes.hermes_native')
@@ -88,6 +88,7 @@ class HermesRunsNativePort:
                 or not callable(resolve_governed)
                 or origin not in {'SYNTHETIC_TEST', 'LIVE_RUNTIME_REPORTED'}
                 or (accept_output is not None and not callable(accept_output))
+                or (accept_runtime_receipt is not None and not callable(accept_runtime_receipt))
                 or type(capacity) is not int or not 1 <= capacity <= 1024
                 or type(answer_ttl_seconds) not in (int, float)
                 or not 1 <= answer_ttl_seconds <= 600):
@@ -108,6 +109,7 @@ class HermesRunsNativePort:
         self._runtime, self._model, self._evidence = runtime, model, evidence
         self._authority = authority_verifier
         self._resolve, self._accept_output = resolve_governed, accept_output
+        self._accept_runtime_receipt = accept_runtime_receipt
         self._capacity, self._answer_ttl = capacity, float(answer_ttl_seconds)
         self._attempts: dict[str, _Attempt] = {}
         self._loop = None
@@ -293,6 +295,18 @@ class HermesRunsNativePort:
             entry.receipt, entry.finished, entry.confirmed_stopped = receipt, True, True
             entry.observed_at = time.monotonic()
             entry.phase = 'completed'
+            if self._accept_runtime_receipt is not None:
+                # Hand the authenticated ORIGINAL receipt back to the existing
+                # AF broker. Never re-sign, rewrite IDs, or fabricate a receipt.
+                await self._accept_runtime_receipt(copy.deepcopy(request), receipt, {
+                    'transport': 'hermes-runs',
+                    'projectionHash': governed.projection.projection_hash(),
+                    'executionContextRef': entry.execution_context_ref,
+                    'sessionRef': digest(entry.task_id),
+                    'runtimeRunRef': digest(receipt.runtime_run_id),
+                    'bindingVerified': True,
+                    'rawContextIncluded': False,
+                })
             # API evidence does not currently expose provider-reconciled USD.
             # Never relabel a client-side estimate or absent number as actual.
             usage = {'provider': receipt.model_provider, 'model': receipt.model,

@@ -147,7 +147,7 @@ def server():
         t.join(timeout=2)
 
 
-def setup_port(endpoint, *, tamper=None, accept=True):
+def setup_port(endpoint, *, tamper=None, accept=True, runtime_receipts=None):
     authority = FixtureAuthority()
     budget_port = FixtureHostBudget()
     gate = HostBudgetAdmission(authority_verifier=authority, budget_port=budget_port,
@@ -183,10 +183,14 @@ def setup_port(endpoint, *, tamper=None, accept=True):
     async def accept_output(request, output, receipt):
         assert output == 'PUBLIC_FIXTURE_ANSWER'
         return accept
+    async def accept_runtime_receipt(request, receipt, context):
+        if runtime_receipts is not None:
+            runtime_receipts.append((request, receipt, context))
     port = HermesRunsNativePort(tenant_id='tenant-test', life_did='did:arthurverse:test-life',
         runtime=runtime, model=MODEL, evidence=evidence, authority_verifier=authority,
         resolve_governed=resolve, origin='SYNTHETIC_TEST', accept_output=accept_output,
-        submission_gate=gate)
+        submission_gate=gate,
+        accept_runtime_receipt=accept_runtime_receipt if runtime_receipts is not None else None)
     return port, authority
 
 
@@ -235,6 +239,27 @@ def test_real_socket_transport_through_actual_af_and_dls(server, monkeypatch):
     assert 'PRIVATE_QUERY' not in posts[0][2]['input']
     # AF evidence and DLS callbacks consume exactly one authenticated snapshot.
     assert sum(c[1].endswith('/events') for c in state['calls']) == 1
+
+
+def test_authenticated_original_receipt_is_handed_to_existing_broker(server):
+    endpoint, _state = server
+    accepted = []
+    port, _ = setup_port(endpoint, runtime_receipts=accepted)
+    _adapter, receipt = asyncio.run(execute(port))
+    assert receipt['status'] == 'completed'
+    assert len(accepted) == 1
+    request, original, context = accepted[0]
+    assert request.invocation_id.startswith('native:')
+    assert original.runtime_run_id == 'run_fixture'
+    assert original.model_provider == MODEL.provider
+    assert original.model == MODEL.model
+    assert context['transport'] == 'hermes-runs'
+    assert context['bindingVerified'] is True
+    assert context['rawContextIncluded'] is False
+    assert context['projectionHash'].startswith('sha256:')
+    assert context['executionContextRef'].startswith('sha256:')
+    assert context['sessionRef'].startswith('sha256:')
+    assert context['runtimeRunRef'].startswith('sha256:')
 
 
 def test_effectful_api_profile_never_submits_run(server):
