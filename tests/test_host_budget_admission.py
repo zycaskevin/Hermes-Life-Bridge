@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 
@@ -14,12 +17,17 @@ pytest.importorskip('agent_factory.runtimes.hermes_native')
 pytest.importorskip('digital_life_native_capability')
 
 from agent_factory.runtimes.hermes import HermesTransportError
+from agent_factory.contracts import (AuthorizationOutcome, ContextProjection, ExecutionAuthorization,
+    RiskLevel, SideEffectPolicy)
+from agent_factory.contracts.runtime_invocation import CapabilityIntent, GovernedInvocation
 from hermes_life_bridge.hermes_direct_api import DirectHermesApi
 from hermes_life_bridge.host_budget_admission import HostBudgetAdmission
-from hermes_life_bridge.runtime_adapter import RuntimeBridgeError
+from hermes_life_bridge.runtime_adapter import HermesRuntimeAdapter, RuntimeBridgeError
+from hermes_life_bridge.config import BridgeConfig
 from host_budget_fixtures import FixtureHostBudget
 from test_hermes_runs_binding import server, setup_port, execute, KEY, MODEL, FixtureAuthority
 from test_agent_tools import tools
+from native_bridge_fixtures import intent_and_selection
 
 
 def submitted(state):
@@ -50,6 +58,85 @@ def test_existing_authority_denial_happens_before_budget_callback(server):
     assert receipt['status'] == 'failed'
     assert authority.calls and not port._submission_gate._budget_port.calls
     assert not submitted(state)
+
+
+
+def test_reserved_dls_identity_binds_distinct_af_invocation_and_rejects_selection_tamper(server):
+    endpoint, _state = server
+    port, _ = setup_port(endpoint)
+
+    class Admission:
+        async def admit(self, intent, selection, descriptor, native):
+            return None
+
+    async def build_intent():
+        cfg = BridgeConfig(life_did=port.life_did, runtime_socket='unused', trace_path='unused')
+        descriptor = await port.discover()
+        adapter = HermesRuntimeAdapter(cfg, tenant_id=port.tenant_id, descriptor=descriptor,
+            native=port, admission=Admission())
+        intent, _selection = intent_and_selection(adapter)
+        return intent
+
+    intent = asyncio.run(build_intent())
+    dls_invocation_id = 'native:' + 'a' * 32
+    reserved = port.reserved_binding_metadata(dls_invocation_id, intent)
+    budget = intent['budget']
+    issued = datetime.now(timezone.utc) - timedelta(seconds=1)
+    expiry = datetime.now(timezone.utc) + timedelta(milliseconds=850)
+    af_intent = CapabilityIntent(
+        intent['intentId'], port.life_did, 'fixture-life', 'public_research',
+        intent['request'], ('public_web',), RiskLevel.L0, budget['maxTokens'],
+        Decimal(budget['maxCostUsd']), expiry,
+        json.dumps({'dlsBinding': reserved, 'maxNativeCalls': budget['maxNativeCalls'],
+                    'maxRuntimeMs': budget['maxRuntimeMs']}))
+    projection = ContextProjection(
+        'reserved-budget-projection', port.life_did, 'fixture-self-gateway', 'test-only',
+        issued, expiry, project_state={'capability_intent': af_intent.to_dict(),
+                                       'dlsBinding': reserved},
+        source_hashes=tuple(intent['contextBinding'].values()))
+    auth = ExecutionAuthorization(
+        'reserved-budget-auth', af_intent.request_id, port.life_did,
+        projection.projection_hash(), AuthorizationOutcome.ALLOW,
+        frozenset({'public_research'}), frozenset({'public_web'}), RiskLevel.L0,
+        SideEffectPolicy.NONE, budget['maxTokens'], Decimal(budget['maxCostUsd']),
+        'fixture-self-gateway', issued, expiry, 'SYNTHETIC_SIGNATURE_NOT_PRODUCTION')
+    # Deliberately distinct from DLS invocation_id. The signed dlsBinding is the link.
+    governed = GovernedInvocation(
+        'af-durable-invocation-fixture', af_intent, 'hermes', port.implementation_id,
+        1, budget['maxTokens'], Decimal(budget['maxCostUsd']), projection, auth)
+    selection = {
+        'schema': port.contract.SELECTION_SCHEMA,
+        'selectionRef': governed.digest(),
+        'authorizationRef': intent['authorizationRef'],
+        'intentDigest': port.contract.digest(intent),
+        'tenantId': port.tenant_id,
+        'lifeDid': port.life_did,
+        'selectedRuntime': 'hermes',
+        'implementationId': port.implementation_id,
+        'capability': intent['capability'],
+        'expiresAt': expiry.isoformat(),
+        'previousInvocationId': None,
+    }
+    request = port.contract.NativeInvocation(dls_invocation_id, copy.deepcopy(intent), selection)
+    gate = port._submission_gate
+    gate.bind_verified_invocation(
+        request=request, governed=governed, model=MODEL, session_id='cognitive-reserved-fixture')
+    context = gate.bind(governed)
+    assert context['schema'] == 'af.native-effect-budget-context.v1'
+    assert gate.diagnostics()['boundCount'] == 1
+    assert not gate._budget_port.calls
+
+    endpoint2, _ = server
+    # This fixture invocation is local-only; use a fresh gate and identical authority shape.
+    port2, _ = setup_port(endpoint2)
+    bad_selection = dict(selection, selectionRef=port.contract.digest('tampered-selection'))
+    bad_request = port2.contract.NativeInvocation(
+        dls_invocation_id, copy.deepcopy(intent), bad_selection)
+    with pytest.raises(RuntimeBridgeError, match='host_budget_af_selection_mismatch'):
+        port2._submission_gate.bind_verified_invocation(
+            request=bad_request, governed=governed, model=MODEL,
+            session_id='cognitive-reserved-fixture-tampered')
+    assert not port2._submission_gate._budget_port.calls
 
 
 def test_verified_budget_metadata_is_exact_but_not_an_actual_billing_receipt(server):

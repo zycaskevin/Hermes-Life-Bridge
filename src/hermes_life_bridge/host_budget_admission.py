@@ -114,11 +114,28 @@ class HostBudgetAdmission:
 
         if not isinstance(governed, GovernedInvocation) or not isinstance(model, ModelConfig):
             raise RuntimeBridgeError('af_authorized_invocation_required')
+        scoped = governed.projection.project_state.get('dlsBinding')
+        expected = {
+            'tenantId': self.tenant_id, 'lifeDid': self.life_did,
+            'invocationId': request.invocation_id,
+            'intentDigest': digest(request.intent),
+            'contextBinding': request.intent.get('contextBinding'),
+        }
+        if isinstance(scoped, dict) and scoped.get('schema') == 'dls.af-reserved-binding.v1':
+            expected.update(schema='dls.af-reserved-binding.v1', requestedRuntime='hermes',
+                            requestedImplementationId=governed.implementation_id)
+            if (request.selection.get('selectionRef') != governed.digest()
+                    or request.selection.get('selectedRuntime') != governed.selected_runtime
+                    or request.selection.get('implementationId') != governed.implementation_id):
+                raise RuntimeBridgeError('host_budget_af_selection_mismatch')
+        else:
+            expected['selectionDigest'] = digest(request.selection)
         if (request.intent.get('tenantId') != self.tenant_id
                 or request.intent.get('lifeDid') != self.life_did
                 or governed.intent.life_did != self.life_did
                 or governed.selected_runtime != 'hermes'
-                or governed.invocation_id != request.invocation_id
+                or scoped != expected
+                or json.loads(governed.intent.constraints_json).get('dlsBinding') != scoped
                 or not isinstance(session_id, str) or not session_id):
             raise RuntimeBridgeError('host_budget_scope_mismatch')
 
