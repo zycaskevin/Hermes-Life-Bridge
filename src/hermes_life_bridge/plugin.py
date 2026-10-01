@@ -343,9 +343,12 @@ def register(ctx):
     # execution safety boundary, not a capability grant.
     register_middleware = getattr(ctx, "register_middleware", None)
     if callable(register_middleware):
+        from hermes_cli.middleware import execution_context_guard
         from .native_effect_budget_middleware import on_llm_execution, on_tool_execution
-        register_middleware("llm_execution", on_llm_execution)
-        register_middleware("tool_execution", on_tool_execution)
+
+        declare_guard = execution_context_guard("af.native-effect-budget-context.v1")
+        register_middleware("llm_execution", declare_guard(on_llm_execution))
+        register_middleware("tool_execution", declare_guard(on_tool_execution))
     # Real modern PluginContext has register_tool(). Keep older/minimal hook-only
     # contexts loadable rather than failing the entire bridge during compatibility
     # probes. On modern Hermes the observer/tool contract is stable; while the
