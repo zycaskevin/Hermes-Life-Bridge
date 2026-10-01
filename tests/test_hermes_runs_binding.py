@@ -262,6 +262,36 @@ def test_authenticated_original_receipt_is_handed_to_existing_broker(server):
     assert context['runtimeRunRef'].startswith('sha256:')
 
 
+def test_reserved_binding_metadata_is_purpose_scoped_and_cross_life_denied(server):
+    endpoint, _state = server
+    port, _ = setup_port(endpoint)
+    async def build():
+        cfg = BridgeConfig(life_did=port.life_did, runtime_socket='unused', trace_path='unused')
+        class Admission:
+            async def admit(self, intent, selection, descriptor, native):
+                return None
+        descriptor = await port.discover()
+        adapter = HermesRuntimeAdapter(cfg, tenant_id=port.tenant_id, descriptor=descriptor,
+            native=port, admission=Admission())
+        intent, _selection = intent_and_selection(adapter)
+        return intent
+    intent = asyncio.run(build())
+    invocation_id = 'native:' + 'a' * 32
+    binding = port.reserved_binding_metadata(invocation_id, intent)
+    assert binding['schema'] == 'dls.af-reserved-binding.v1'
+    assert binding['invocationId'] == invocation_id
+    assert binding['tenantId'] == port.tenant_id
+    assert binding['lifeDid'] == port.life_did
+    assert binding['requestedRuntime'] == 'hermes'
+    assert binding['requestedImplementationId'] == port.implementation_id
+    assert binding['intentDigest'].startswith('sha256:')
+    assert set(binding['contextBinding']) == set(intent['contextBinding'])
+    bad = copy.deepcopy(intent)
+    bad['lifeDid'] = 'did:arthurverse:other-life'
+    with pytest.raises(RuntimeBridgeError, match='native_life_scope_mismatch'):
+        port.reserved_binding_metadata(invocation_id, bad)
+
+
 def test_effectful_api_profile_never_submits_run(server):
     endpoint, state = server
     state['readonly'] = False

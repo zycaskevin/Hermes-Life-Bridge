@@ -179,15 +179,34 @@ class HermesRunsNativePort:
             'selectionDigest': self.contract.digest(request.selection),
             'contextBinding': copy.deepcopy(request.intent['contextBinding'])}
 
+    def reserved_binding_metadata(self, invocation_id: str, intent: dict) -> dict:
+        """Pre-selection binding; AF's envelope later authenticates selection."""
+        self.contract._invocation_id(invocation_id)
+        checked = self.contract.validate_intent(intent)
+        if checked["tenantId"] != self.tenant_id or checked["lifeDid"] != self.life_did:
+            raise RuntimeBridgeError("native_life_scope_mismatch")
+        return {"schema": "dls.af-reserved-binding.v1",
+            "tenantId": self.tenant_id, "lifeDid": self.life_did,
+            "invocationId": invocation_id, "intentDigest": self.contract.digest(checked),
+            "contextBinding": copy.deepcopy(checked["contextBinding"]),
+            "requestedRuntime": "hermes", "requestedImplementationId": self.implementation_id}
+
     def _validate_governed(self, request, governed) -> None:
         c = self.af_contract
         if not isinstance(governed, c.GovernedInvocation):
             raise RuntimeBridgeError('af_governed_invocation_required')
         b = request.intent['budget']
         constraints = json.loads(governed.intent.constraints_json)
-        expected = self.binding_metadata(request)
-        if (governed.invocation_id != request.invocation_id
-                or governed.intent.request_id != request.intent['intentId']
+        binding = governed.projection.project_state.get("dlsBinding")
+        if isinstance(binding, dict) and binding.get("schema") == "dls.af-reserved-binding.v1":
+            expected = self.reserved_binding_metadata(request.invocation_id, request.intent)
+            if request.selection.get("selectionRef") != governed.digest():
+                raise RuntimeBridgeError("af_selection_envelope_mismatch")
+        else:
+            expected = self.binding_metadata(request)
+        # AF owns its durable invocation identity; DLS owns its normalized ID.
+        # Their exact link is already covered by authorization via dlsBinding.
+        if (governed.intent.request_id != request.intent['intentId']
                 or governed.intent.life_did != self.life_did
                 or governed.selected_runtime != 'hermes'
                 or governed.implementation_id != self.implementation_id
