@@ -287,7 +287,7 @@ class HermesRunsNativePort:
             verifier = self.af_api.HermesApiReceiptVerifier(self._evidence.registry)
             if not verifier.verify(receipt, governed, at=datetime.now(timezone.utc)):
                 raise RuntimeBridgeError('hermes_runtime_receipt_not_authenticated')
-            if (receipt.invocation_id != request.invocation_id
+            if (receipt.invocation_id != governed.invocation_id
                     or receipt.invocation_hash != governed.digest()
                     or receipt.life_did != self.life_did or receipt.runtime_id != 'hermes'
                     or receipt.status != 'completed'):
