@@ -206,8 +206,8 @@ def test_research_is_real_receipt_driven_idempotent_and_bounded(tools,monkeypatc
     def execute(intent):
         seen.append(intent);return completed(tools,intent['intent_id'])
     monkeypatch.setattr(tools,'_run_af',execute)
-    one=tools.research('public topic',session='session')
-    two=tools.research('public topic',session='session')
+    one=tools._legacy_research_fixture('public topic',session='session')
+    two=tools._legacy_research_fixture('public topic',session='session')
     assert one['ok'] and two['replayed'] and len(seen)==1
     assert one['routeDecision']['selectedRuntime']=='hermes'
     assert one['routeDecision']['candidateCoverage']=='FULL_OWNER_SELECTION'
@@ -217,8 +217,8 @@ def test_research_is_real_receipt_driven_idempotent_and_bounded(tools,monkeypatc
     assert one['budgetGate']['spendCompliance']=='UNKNOWN'
     assert 'watch_id' not in seen[0] and seen[0]['life_did']==DID
     assert seen[0]['budget']['max_searches']==1
-    assert tools.research('another topic',session='session')['ok']
-    denied=tools.research('third topic',session='session')
+    assert tools._legacy_research_fixture('another topic',session='session')['ok']
+    denied=tools._legacy_research_fixture('third topic',session='session')
     assert denied['executed'] is False and len(seen)==2
 
 
@@ -240,7 +240,7 @@ def test_research_preserves_provider_actual_cost_evidence(tools,monkeypatch):
         }
         return data
     monkeypatch.setattr(tools,'_run_af',fake)
-    result=tools.research('actual cost topic',consumer='native_tool')
+    result=tools._legacy_research_fixture('actual cost topic',consumer='native_tool')
     assert result['ok'] is True
     assert result['budgetGate']['actualCostUsd']=='0.00925'
     assert result['budgetGate']['actualCostStatus']=='PROVIDER_REPORTED'
@@ -260,7 +260,7 @@ def test_failed_af_envelope_preserves_bounded_reason(tools,monkeypatch):
             'reason':'search_transport_failed',
         },
     )
-    result=tools.research('agent news',consumer='native_tool')
+    result=tools._legacy_research_fixture('agent news',consumer='native_tool')
     assert result['ok'] is False
     assert result['error']=='agent_factory_research_failed'
     assert result['failure_reason']=='search_transport_failed'
@@ -277,7 +277,7 @@ def test_unknown_af_failure_reason_is_not_leaked(tools,monkeypatch):
             'reason':'secret/private diagnostic text',
         },
     )
-    result=tools.research('agent news',consumer='native_tool')
+    result=tools._legacy_research_fixture('agent news',consumer='native_tool')
     assert result['failure_reason']=='internal_failure'
     assert 'secret' not in json.dumps(result)
 
@@ -285,11 +285,11 @@ def test_unknown_af_failure_reason_is_not_leaked(tools,monkeypatch):
 def test_operator_diagnostic_does_not_consume_owner_budget(tools,monkeypatch):
     seen=[]
     monkeypatch.setattr(tools,'_run_af',lambda x:(seen.append(x) or completed(tools,x['intent_id'])))
-    assert tools.research('diag one',consumer='operator_diagnostic')['ok']
-    assert tools.research('diag two',consumer='operator_diagnostic')['ok']
-    assert tools.research('owner one',consumer='native_tool')['ok']
-    assert tools.research('owner two',consumer='native_tool')['ok']
-    denied=tools.research('owner three',consumer='native_tool')
+    assert tools._legacy_research_fixture('diag one',consumer='operator_diagnostic')['ok']
+    assert tools._legacy_research_fixture('diag two',consumer='operator_diagnostic')['ok']
+    assert tools._legacy_research_fixture('owner one',consumer='native_tool')['ok']
+    assert tools._legacy_research_fixture('owner two',consumer='native_tool')['ok']
+    denied=tools._legacy_research_fixture('owner three',consumer='native_tool')
     assert denied['executed'] is False
     assert len(seen)==4
 
@@ -299,7 +299,7 @@ def test_research_rejects_missing_route_or_budget_owner_evidence(tools,monkeypat
         def fake(intent, missing=missing):
             data=completed(tools,intent['intent_id']);data.pop(missing);return data
         monkeypatch.setattr(tools,'_run_af',fake)
-        result=tools.research('topic-'+missing,consumer='operator_diagnostic')
+        result=tools._legacy_research_fixture('topic-'+missing,consumer='operator_diagnostic')
         assert result['ok'] is False and result['completed'] is False
 
 
@@ -307,7 +307,7 @@ def test_bad_research_provenance_does_not_claim_success(tools,monkeypatch):
     def fake(intent):
         data=completed(tools,intent['intent_id']);data['life_did']='did:arthurverse:other';return data
     monkeypatch.setattr(tools,'_run_af',fake)
-    result=tools.research('agent news')
+    result=tools._legacy_research_fixture('agent news')
     assert result['ok'] is False and result['completed'] is False
 
 
@@ -321,7 +321,7 @@ def test_tools_cannot_gain_model_supplied_scope_path_or_command(tools,monkeypatc
 def test_secret_query_not_sent_out(tools,monkeypatch):
     monkeypatch.setattr(tools,'_run_af',lambda *a:pytest.fail('must not execute'))
     for query in ('Bearer private-credential','/home/private/data','sk-12345678901234567890','alice@example.com'):
-        with pytest.raises(m.ToolBoundaryError):tools.research(query)
+        with pytest.raises(m.ToolBoundaryError):tools._legacy_research_fixture(query)
 
 
 def test_status_is_scoped_and_readonly(tools,monkeypatch):
@@ -421,10 +421,10 @@ def test_register_memory_only_profile_does_not_expose_native_tools(
 
 def test_ledger_restart_preserves_rate_limit_and_scope(tools,monkeypatch):
     monkeypatch.setattr(tools,'_run_af',lambda x:completed(tools,x['intent_id']))
-    tools.research('first');tools.research('second')
+    tools._legacy_research_fixture('first');tools._legacy_research_fixture('second')
     again=m.NativeAgentTools(tools.test_config)
     monkeypatch.setattr(again,'_run_af',lambda *a:pytest.fail('budget must survive restart'))
-    assert again.research('third')['executed'] is False
+    assert again._legacy_research_fixture('third')['executed'] is False
 
 
 def test_register_native_tools_only_when_explicitly_enabled(tools,monkeypatch):

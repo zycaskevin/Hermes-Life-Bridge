@@ -17,6 +17,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("doctor")
     sub.add_parser("selftest")
     sub.add_parser("compatibility")
+    native = sub.add_parser("native-readiness")
+    native.add_argument("--endpoint", required=True)
+    native.add_argument("--offline", action="store_true")
 
     trace = sub.add_parser("trace")
     trace.add_argument("--tail", type=int, default=20)
@@ -31,6 +34,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "native-readiness":
+        from .native_readiness import native_readiness
+        result = native_readiness(endpoint=args.endpoint, probe=not args.offline)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0 if result["nativeExecutionReady"] else 2
     config = BridgeConfig.from_env()
 
     if args.command == "trace":

@@ -1,7 +1,9 @@
-"""Life-scoped native tools: verified recall, bounded AF research and own status.
+"""Life-scoped tools: DLMF recall, Hermes-native research bridge and own status.
 
-No model-provided executable, URL, credential, path, lifeDid, or write operation.
-Memory authority stays in DLMF. Research execution stays in Agent Factory.
+No model-provided executable, credential, path, lifeDid, or write operation.
+Memory authority stays in DLMF. Public research executes in the already-selected
+Hermes Runtime through Hermes' native tool architecture; HLB does not implement
+Search/Read or select/fallback between Runtimes.
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ from urllib import request as urlrequest
 
 from .config import BridgeConfig
 from .deployment_context import _load as load_runtime_manifest
+from .governed_research import research_via_bound_bridge
 
 TOOLSET = "digital_life"
 RECALL = "digital_life_recall"
@@ -65,13 +68,18 @@ TOOL_SCHEMAS = {
         {"query": {"type": "string", "minLength": 1, "maxLength": 1024,
                    "description": "Topic to recall. Omit for durable user preferences and prior agreements."}}, []),
     RESEARCH: _schema(RESEARCH,
-        "Actually search/read public news and obtain a bounded synthesis through Agent Factory. "
-        "Use when the user asks you to look up or investigate public information. The current "
-        "search provider is Google News RSS, not a general filesystem or universal browser. "
-        "Send only a short public search topic; never send private memories, credentials or "
-        "identifying personal data. Execution is synchronous and rate-limited. Cite returned "
-        "sources and distinguish RSS excerpts from full articles. No shell or write access.",
-        {"query": {"type": "string", "minLength": 2, "maxLength": 256}}, ["query"]),
+        "Submit public_research.v1 only through this life's registered DLS/AF governed bridge. "
+        "No registered admitted host means unavailable, not a pending background task. "
+        "The selected Hermes host performs work through its own authorized native tools; HLB does not "
+        "provide a search engine, browser, researcher, Runtime selector or fallback. Send only a short "
+        "public topic; never send private memories, credentials or identifying personal data. Execution "
+        "is synchronous and rate-limited. Preserve the user's requested time window with max_age_days. "
+        "The bridge passes that constraint to Hermes and reports native execution evidence; it does not "
+        "re-implement a publication-freshness research engine. Execution completion is distinct from "
+        "taskAccepted, which requires the host's separate result/freshness acceptance. No shell or write access is granted.",
+        {"query": {"type": "string", "minLength": 2, "maxLength": 256},
+         "max_age_days": {"type": "integer", "minimum": 1, "maximum": 365,
+                          "description": "Hard rolling publication-age limit in days, anchored to the service clock. Use 7 for the past week."}}, ["query"]),
     STATUS: _schema(STATUS,
         "Read this Digital Life's bound memory-service readiness, developmental state and "
         "current affect. Optionally inspect one returned research receipt by request_id. "
@@ -670,7 +678,14 @@ class NativeAgentTools:
                   "dimensions": affect.get("dimensions"), "observedAt": affect.get("updated_at")},
                 "shellAvailable": False, "writesAvailable": False}
 
-    def research(self, query: str, *, session: str = "", consumer: str = "direct") -> dict:
+    def research(self, query: str, *, session: str = "", consumer: str = "direct",
+                 max_age_days: int | None = None) -> dict:
+        """Submit an intent only through the bound DLS/AF governed composition."""
+        return research_via_bound_bridge(
+            self, query, session=session, consumer=consumer,
+            max_age_days=max_age_days)
+
+    def _legacy_research_fixture(self, query: str, *, session: str = "", consumer: str = "direct") -> dict:
         query = _text(query, "query", 256)
         if consumer not in _CONSUMERS - {"unknown"}:
             raise ToolBoundaryError("consumer_invalid")
@@ -826,7 +841,7 @@ def tools_enabled() -> bool:
 def _call(kind: str, args: dict, **kwargs) -> str:
     try:
         if not isinstance(args, dict): raise ToolBoundaryError("arguments_invalid")
-        allowed = {"request_id"} if kind == STATUS else {"query"}
+        allowed = {"request_id"} if kind == STATUS else {"query", "max_age_days"} if kind == RESEARCH else {"query"}
         if set(args) - allowed: raise ToolBoundaryError("unknown_arguments")
         tools = NativeAgentTools(BridgeConfig.from_env())
         session = str(kwargs.get("session_id") or "")
@@ -837,11 +852,11 @@ def _call(kind: str, args: dict, **kwargs) -> str:
             query = args.get("query", "使用者的長期偏好、重要事實與先前約定 / durable user preferences and prior agreements")
             result = tools.recall(query, session=session, consumer=consumer)
             result["queryMode"] = "provided" if "query" in args else "durable_preferences_default"
-        elif kind == RESEARCH: result = tools.research(args.get("query"), session=session, consumer=consumer)
+        elif kind == RESEARCH: result = tools.research(args.get("query"), session=session, consumer=consumer, max_age_days=args.get("max_age_days"))
         else: result = tools.status(args.get("request_id", ""))
     except ToolBoundaryError as exc:
         result = {"ok": False, "error": str(exc), "executed": False,
-                  "argumentHelp": "recall: {} or {query: nonempty topic}; research: {query: nonempty public topic}; status: {}. Correct the arguments before retrying."}
+                  "argumentHelp": "recall: {} or {query: nonempty topic}; research: {query: nonempty public topic, max_age_days: optional integer 1..365}; status: {}. Correct the arguments before retrying."}
     except Exception:
         result = {"ok": False, "error": "native_tool_unavailable", "executed": False}
     return json.dumps(result, ensure_ascii=False)
