@@ -72,6 +72,27 @@ class HermesRuntimeAdapter:
             receipt, self.capabilities(), tenant_id=self.tenant_id,
             life_did=self.config.life_did)
 
+    async def invoke_prepared(self, intent: dict, prepare: Callable) -> dict:
+        """Reserve DLS invocation identity before the existing authority selects Runtime.
+
+        Selection/admission remain inside the canonical DLS RuntimeAdapter. HLB only
+        enforces its bound life/tenant scope and validates the returned receipt.
+        """
+        if not isinstance(intent, dict) or (
+            intent.get("lifeDid") != self.config.life_did
+            or intent.get("tenantId") != self.tenant_id
+        ):
+            raise RuntimeBridgeError("native_life_scope_mismatch")
+        if not callable(prepare):
+            raise RuntimeBridgeError("trusted_preparation_port_required")
+        delegate = getattr(self._adapter, "invoke_prepared", None)
+        if not callable(delegate):
+            raise RuntimeBridgeError("dls_prepared_invocation_not_supported")
+        receipt = await delegate(copy.deepcopy(intent), prepare)
+        return self.projection.validate_receipt(
+            receipt, self.capabilities(), tenant_id=self.tenant_id,
+            life_did=self.config.life_did)
+
     def project_receipt(self, receipt: dict) -> list[dict]:
         return self.projection.project_native_receipt(
             receipt, self.capabilities(), tenant_id=self.tenant_id,
