@@ -275,7 +275,7 @@ class HermesRunsNativePort:
             run_path = '/v1/runs/' + quote(receipt.runtime_run_id, safe='')
             terminal = capture.responses.get(run_path)
             if (terminal is None
-                    or terminal.payload.get('session_id') != receipt.runtime_run_id
+                    or terminal.payload.get('session_id') != entry.task_id
                     or terminal.payload.get('execution_context_ref') != entry.execution_context_ref):
                 raise RuntimeBridgeError('hermes_native_execution_context_binding_mismatch')
             path = run_path + '/events'
@@ -362,7 +362,7 @@ class HermesRunsNativePort:
                 response = await self._evidence.transport.get_json(path)
                 body = response.payload
                 if (body.get('object') != 'hermes.run' or body.get('run_id') != handle.run_id
-                        or body.get('session_id') != handle.run_id
+                        or body.get('session_id') != handle.runtime_task_id
                         or not entry.execution_context_ref
                         or body.get('execution_context_ref') != entry.execution_context_ref):
                     raise RuntimeBridgeError('hermes_cancel_execution_binding_mismatch')

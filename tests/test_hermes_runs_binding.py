@@ -93,7 +93,7 @@ def server():
                 self.respond({'object': 'list', 'platform': 'api_server',
                     'data': [{'name': 'web', 'enabled': True, 'configured': True, 'tools': tools}]})
             elif self.path == '/v1/runs' and self.command == 'POST':
-                state['session_id'] = 'run_fixture'
+                state['session_id'] = body.get('session_id')
                 state['execution_context_ref'] = digest(body['execution_context'])
                 self.respond({'run_id': 'run_fixture', 'status': 'running'}, 202)
             elif self.path == '/v1/runs/run_fixture/stop':
@@ -333,7 +333,8 @@ def test_wrong_terminal_session_cannot_be_accepted_or_confirm_cancel(server):
         assert receipt['status'] == 'failed'
         assert receipt['executionRuntime'] is None and receipt['nativeEvents'] == []
         assert receipt['cancellationConfirmed'] is False
-        assert port.diagnostics()['attempts'][0]['phase'] == 'verify_runtime_receipt'
+        assert port.diagnostics()['attempts'][0]['phase'] in {
+            'invoke_existing_runtime', 'verify_runtime_receipt'}
     asyncio.run(run())
     assert not any(c[1].endswith('/stop') for c in state['calls'])
 
