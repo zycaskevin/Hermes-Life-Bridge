@@ -37,8 +37,12 @@ bundle is **not** granted to Nancy. An explicitly configured
 `HLB_RESIDENT_RECALL_TOOL_ENABLED=true` exposes **only** `digital_life_recall`
 through the existing DLMF memory-view binding, even with
 `HLB_AGENT_TOOLS_ENABLED=false`. Automatic memory context injection remains
-independent. `HLB_RESIDENT_RECALL_TIMEOUT_SECONDS` defaults to 12 seconds and
-may be increased to at most 15 seconds for the slower manual query path.
+independent. `HLB_RESIDENT_RECALL_TIMEOUT_SECONDS` defaults to 30 seconds and
+may be set between 2 and 40 seconds for the manual query path. The DLMF live
+verified retrieval view permits up to 20 seconds for the primary and historical
+providers; a shorter HLB deadline previously caused intermittent failed recalls.
+The automatically injected memory context has its **separate** timeout and
+is not raised by this change.
 
 The handler validates Nancy's immutable existing-resident skill/memory
 manifests, the owner-bound original Feishu direct-message session from the
@@ -46,10 +50,18 @@ resident Hermes `state.db`, the hash-bound source allowlist and a real user
 message **before** any private DLMF retrieval. Missing, other-life, other-user,
 non-Feishu or synthetic sessions fail closed without returning memory. Successful
 retrieval returns verified, same-life DLMF records; a temporary retrieval
-failure returns an explicit error, never fabricated memories or success.
+failure returns an explicit error plus a bounded, non-sensitive `failureReason`
+(and possibly a safe HTTP status). No exception text, URL, query or memory
+content is placed in failure diagnostics. An unavailable retrieval must never
+be interpreted as zero matching memories or fabricated success.
 
 A scoped activation entry is `python3 scripts/activate_nancy_resident_recall.py
---check` followed by `--apply` only after review. It verifies an exact installed
+--check` followed by `--apply` only after review. For existing live Nancy
+installations previously activated with the 15-second manual timeout, use
+`python3 scripts/upgrade_nancy_resident_recall_timeout.py --check` and then
+`--apply`; that upgrade checks the exact accepted prior HLB modules, replaces
+only the two changed modules and manual-timeout setting, and retains a private
+rollback snapshot with the original Gateway configuration. It verifies an exact installed
 baseline, backs up the three source modules and HLB env privately, changes only
 those modules plus one opt-in setting, checks the registered tool and the real
 HLB Doctor, waits for transient Gateway API startup, and restores previous

@@ -4,6 +4,7 @@ import hashlib
 import json
 import sqlite3
 from pathlib import Path
+from urllib import error as urlerror
 
 import pytest
 from hermes_life_bridge import agent_tools as m
@@ -475,6 +476,36 @@ def test_existing_resident_manual_recall_is_explicit_and_verified(resident_memor
     assert calls[0][0]['topK'] == 3
     assert calls[0][1] == cfg.resident_recall_timeout_seconds
     assert cfg.agent_tools_enabled is False
+
+
+def test_verified_recall_failure_reports_sanitized_diagnostic_not_zero_matches(resident_memory, monkeypatch):
+    secret = 'private-access-token-hidden'
+    failures = (
+        (TimeoutError(secret), 'dlmf_transport_timeout', None),
+        (urlerror.URLError(secret), 'dlmf_transport_unavailable', None),
+        (urlerror.HTTPError('http://localhost/private', 503, secret, None, None), 'dlmf_upstream_unavailable', 503),
+        (urlerror.HTTPError('http://localhost/private', 400, secret, None, None), 'dlmf_request_failed', 400),
+        (urlerror.HTTPError('http://localhost/private', 403, secret, None, None), 'dlmf_authorization_rejected', 403),
+        (m.ToolBoundaryError(secret), 'verified_retrieval_invalid', None),
+        (RuntimeError(secret), 'dlmf_unexpected_failure', None),
+    )
+    for exc, reason, code in failures:
+        def fail(_self, payload, timeout):
+            assert payload['scope'] == resident_memory.scope
+            assert timeout == 30
+            raise exc
+        monkeypatch.setattr(m.MemoryOnlyRecallClient, '_http', fail)
+        client = m.MemoryOnlyRecallClient(resident_memory.test_config)
+        outcome = client.recall('query which must never appear in the diagnostic', timeout=30)
+        assert outcome['ok'] is False and outcome['verified'] is False
+        assert outcome['error'] == 'verified_recall_unavailable'
+        assert outcome['failureReason'] == reason
+        assert outcome.get('upstreamStatusCode') == code
+        assert outcome['memories'] == []
+        assert 'no conclusion' in outcome['notice']
+        serialized = json.dumps(outcome)
+        assert secret not in serialized and 'query which must never appear' not in serialized
+        assert 'http://localhost/private' not in serialized
 
 
 def test_existing_resident_manual_recall_fail_closed(resident_memory, monkeypatch):

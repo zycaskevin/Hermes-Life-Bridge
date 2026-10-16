@@ -26,6 +26,27 @@ def test_bridge_config_memory_recall_timeout_defaults_and_bounds(tmp_path, monke
         BridgeConfig.from_env()
 
 
+def test_resident_manual_recall_budget_covers_dlmf_verified_retrieval(monkeypatch, tmp_path):
+    import os
+    path = tmp_path / "empty-hlb.env"
+    path.write_text("", encoding="utf-8")
+    monkeypatch.setenv("HLB_CONFIG_FILE", str(path))
+    monkeypatch.delenv("HLB_RESIDENT_RECALL_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("HLB_MEMORY_RECALL_TIMEOUT_SECONDS", raising=False)
+    cfg = BridgeConfig.from_env()
+    # DLMF can spend 20s searching primary + historical scopes in parallel.
+    assert cfg.resident_recall_timeout_seconds == 30.0
+    assert cfg.memory_recall_timeout_seconds == 5.0
+    monkeypatch.setenv("HLB_RESIDENT_RECALL_TIMEOUT_SECONDS", "30")
+    assert BridgeConfig.from_env().resident_recall_timeout_seconds == 30.0
+    for invalid in ("1", "41", "nan", "inf"):
+        monkeypatch.setenv("HLB_RESIDENT_RECALL_TIMEOUT_SECONDS", invalid)
+        with pytest.raises(ValueError, match="HLB_RESIDENT_RECALL_TIMEOUT_SECONDS"):
+            BridgeConfig.from_env()
+    monkeypatch.setenv("HLB_RESIDENT_RECALL_TIMEOUT_SECONDS", "40")
+    assert BridgeConfig.from_env().resident_recall_timeout_seconds == 40.0
+
+
 def test_auto_recall_uses_configured_memory_timeout(monkeypatch):
     config = BridgeConfig(
         life_did="did:arthurverse:test-life",

@@ -22,7 +22,7 @@ import uuid
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
-from urllib import request as urlrequest
+from urllib import error as urlerror, request as urlrequest
 
 from .config import BridgeConfig
 from .deployment_context import _load as load_runtime_manifest
@@ -285,6 +285,26 @@ def _canonical_manifest_hash(value: dict[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
+def _safe_recall_failure(exc: Exception) -> tuple[str, int | None]:
+    """Public diagnostic categories only; never expose URLs, queries or tokens."""
+    if isinstance(exc, urlerror.HTTPError):
+        status = exc.code if type(exc.code) is int and 400 <= exc.code <= 599 else None
+        if status in (401, 403):
+            return "dlmf_authorization_rejected", status
+        if status in (408, 429, 502, 503, 504):
+            return "dlmf_upstream_unavailable", status
+        return "dlmf_request_failed", status
+    if isinstance(exc, TimeoutError):
+        return "dlmf_transport_timeout", None
+    if isinstance(exc, (urlerror.URLError, ConnectionError)):
+        return "dlmf_transport_unavailable", None
+    if isinstance(exc, (json.JSONDecodeError, UnicodeError)):
+        return "dlmf_response_invalid", None
+    if isinstance(exc, ToolBoundaryError):
+        return "verified_retrieval_invalid", None
+    return "dlmf_unexpected_failure", None
+
+
 class MemoryOnlyRecallClient:
     """Existing-resident verified recall without native-tool authority."""
 
@@ -486,14 +506,19 @@ class MemoryOnlyRecallClient:
                     "An empty match is not proof that all history is absent."
                 ),
             }
-        except Exception:
+        except Exception as exc:
+            reason, http_status = _safe_recall_failure(exc)
             return {
                 "ok": False,
+                "verified": False,
                 "request_id": rid,
                 "error": "verified_recall_unavailable",
+                "failureReason": reason,
+                **({"upstreamStatusCode": http_status} if http_status is not None else {}),
                 "memories": [],
                 "notice": (
-                    "Recall failed; do not invent a memory or interpret failure as an empty memory store."
+                    "Verified recall failed; no conclusion about matching memories is possible. "
+                    "Do not invent memories or treat failure as zero search results."
                 ),
             }
 
