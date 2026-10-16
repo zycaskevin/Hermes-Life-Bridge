@@ -10,6 +10,7 @@ from .agent_tools import (
     TOOLSET as LIFE_TOOLSET, TOOL_SCHEMAS as LIFE_TOOL_SCHEMAS,
     RECALL, RESEARCH, STATUS, tools_enabled, auto_recall_context,
     recall_handler, research_handler, status_handler,
+    resident_recall_enabled, resident_recall_handler,
 )
 from .skill_proposal import (
     TOOL as SKILL_PROPOSAL_TOOL,
@@ -370,6 +371,15 @@ def register(ctx):
                     handler=handler, check_fn=tools_enabled,
                     description=LIFE_TOOL_SCHEMAS[name]["function"]["description"],
                 )
+        elif config is not None and config.resident_recall_tool_enabled:
+            # Nancy's existing-resident memory binding is NOT the Lily/Luna
+            # agent-tools grant. Only explicitly enabled verified DLMF recall
+            # is exposed; never research/status/native tools by implication.
+            register_tool(
+                name=RECALL, toolset=LIFE_TOOLSET, schema=LIFE_TOOL_SCHEMAS[RECALL],
+                handler=resident_recall_handler, check_fn=resident_recall_enabled,
+                description=LIFE_TOOL_SCHEMAS[RECALL]["function"]["description"],
+            )
         if config is not None and config.skill_proposals_enabled:
             register_tool(
                 name=SKILL_PROPOSAL_TOOL,

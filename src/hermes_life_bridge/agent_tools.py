@@ -339,6 +339,7 @@ class MemoryOnlyRecallClient:
         ):
             raise ToolBoundaryError("memory_primary_scope")
         self.scope = dict(scope)
+        self.digital_life_id = binding.get("digitalLifeId")
 
         authorities = binding.get("authorities")
         if (
@@ -836,6 +837,58 @@ def tools_enabled() -> bool:
         return True
     except Exception:
         return False
+
+
+def _bound_resident_recall(config: BridgeConfig):
+    """Require an owner-bound Feishu DM source and the matching DLMF life."""
+    if (not config.resident_recall_tool_enabled or config.agent_tools_enabled
+            or not config.auto_recall_enabled or not config.skill_proposal_binding_file):
+        raise ToolBoundaryError("resident_recall_not_enabled")
+    from .skill_proposal import _load_resident_binding, _load_real_conversation_policy
+    binding, root = _load_resident_binding(config)
+    policy = _load_real_conversation_policy(root)
+    if len(policy["sources"]) != 1 or policy["sources"][0]["source"] != "feishu":
+        raise ToolBoundaryError("resident_recall_feishu_only")
+    client = MemoryOnlyRecallClient(config)
+    if client.digital_life_id != binding["digitalLifeId"]:
+        raise ToolBoundaryError("resident_recall_life_binding_mismatch")
+    return client, Path(binding["hermes"]["stateDb"]), policy
+
+
+def resident_recall_enabled() -> bool:
+    """Require both owner-session and DLMF bindings; never enable native execution."""
+    try:
+        _bound_resident_recall(BridgeConfig.from_env())
+        return True
+    except Exception:
+        return False
+
+
+def resident_recall_handler(args: dict, **kwargs) -> str:
+    """Read only this resident's verified DLMF memory through the existing view."""
+    try:
+        if not isinstance(args, dict) or set(args) - {"query"}:
+            raise ToolBoundaryError("recall_arguments_invalid")
+        config = BridgeConfig.from_env()
+        client, state_db, source_policy = _bound_resident_recall(config)
+        from .skill_proposal import _assert_real_resident_session
+        session = str(kwargs.get("session_id") or "")
+        _assert_real_resident_session(state_db, source_policy, session)
+        query = args.get(
+            "query",
+            "使用者的長期偏好、重要事實與先前約定 / durable user preferences and prior agreements",
+        )
+        query = _text(query, "query", 1024)
+        result = client.recall(
+            query, session=session, timeout=config.resident_recall_timeout_seconds,
+            consumer="native_tool",
+        )
+        result["queryMode"] = "provided" if "query" in args else "durable_preferences_default"
+        return json.dumps(result, ensure_ascii=False)
+    except Exception:
+        # No private schema/file/token or other-life evidence in a failed tool call.
+        return json.dumps({"ok": False, "verified": False, "executed": False,
+                           "error": "verified_recall_unavailable", "memories": []})
 
 
 def _call(kind: str, args: dict, **kwargs) -> str:

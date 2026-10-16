@@ -1,4 +1,5 @@
 from __future__ import annotations
+from dataclasses import replace
 import hashlib
 import json
 import sqlite3
@@ -7,6 +8,8 @@ from pathlib import Path
 import pytest
 from hermes_life_bridge import agent_tools as m
 from hermes_life_bridge.config import BridgeConfig
+from hermes_life_bridge.skill_proposal import _canonical_hash
+from test_skill_proposal import resident_config_for
 
 DID = 'did:arthurverse:test-life'
 
@@ -437,6 +440,81 @@ def test_register_native_tools_only_when_explicitly_enabled(tools,monkeypatch):
     ctx=Ctx();plugin.register(ctx)
     assert all(name in ctx.tools for name in m.TOOL_SCHEMAS)
     assert all(ctx.tools[name]['toolset']==m.TOOLSET for name in m.TOOL_SCHEMAS)
+
+
+def _real_feishu_recall_config(resident_memory):
+    root = resident_memory.test_root.parent / 'feishu-owner-source'
+    root.mkdir(mode=0o700)
+    owner_cfg = resident_config_for(root)
+    binding_path = Path(owner_cfg.skill_proposal_binding_file)
+    binding = json.loads(binding_path.read_text())
+    binding['digitalLifeId'] = resident_memory.digital_life_id
+    binding['manifestHash'] = _canonical_hash({k:v for k,v in binding.items() if k != 'manifestHash'})
+    private(binding_path, binding)
+    return replace(resident_memory.test_config, resident_recall_tool_enabled=True,
+                   skill_proposal_binding_file=str(binding_path))
+
+
+def test_existing_resident_manual_recall_is_explicit_and_verified(resident_memory, monkeypatch):
+    cfg = _real_feishu_recall_config(resident_memory)
+    monkeypatch.setattr(BridgeConfig, 'from_env', staticmethod(lambda: cfg))
+    calls = []
+
+    def verified_http(_self, payload, timeout):
+        calls.append((payload, timeout))
+        return retrieval(resident_memory, 'verified private memory')
+
+    monkeypatch.setattr(m.MemoryOnlyRecallClient, '_http', verified_http)
+    assert m.resident_recall_enabled() is True
+    result = json.loads(m.resident_recall_handler({'query':'past preferences'},session_id='resident-session'))
+    assert result['ok'] is True and result['verified'] is True
+    assert result['lifeDid'] == DID and result['authority'] == 'digital-life-memory-fabric'
+    assert result['memories'][0]['text'] == 'verified private memory'
+    assert result['queryMode'] == 'provided'
+    assert calls[0][0]['scope'] == resident_memory.scope
+    assert calls[0][0]['topK'] == 3
+    assert calls[0][1] == cfg.resident_recall_timeout_seconds
+    assert cfg.agent_tools_enabled is False
+
+
+def test_existing_resident_manual_recall_fail_closed(resident_memory, monkeypatch):
+    allowed = _real_feishu_recall_config(resident_memory)
+    calls = []
+
+    def forbidden_http(*args):
+        calls.append(True)
+        raise AssertionError('authorization failure must not send request')
+
+    monkeypatch.setattr(m.MemoryOnlyRecallClient, '_http', forbidden_http)
+    for cfg in (
+        replace(allowed, resident_recall_tool_enabled=False),  # opt-in missing
+        replace(allowed, life_did='did:arthurverse:wrong-life'),
+        replace(allowed, auto_recall_enabled=False),
+        replace(allowed, agent_tools_enabled=True),
+        replace(allowed, skill_proposal_binding_file=''),
+    ):
+        monkeypatch.setattr(BridgeConfig, 'from_env', staticmethod(lambda cfg=cfg: cfg))
+        assert m.resident_recall_enabled() is False
+        result = json.loads(m.resident_recall_handler({'query':'past preferences'}))
+        assert result == {'ok':False,'verified':False,'executed':False,
+                          'error':'verified_recall_unavailable','memories':[]}
+    monkeypatch.setattr(BridgeConfig, 'from_env', staticmethod(lambda: allowed))
+    assert m.resident_recall_enabled() is True
+    for malformed in (None, {'otherLifeDid': DID}, {'query':'ok','command':'delete'},
+                      {'query':''}):
+        result = json.loads(m.resident_recall_handler(malformed, session_id='resident-session'))
+        assert result['ok'] is False and result['executed'] is False
+    # Model-supplied arguments cannot confer an authenticated Feishu source.
+    for invalid_session in ('', 'another-life-session', 'telegram-forged-session'):
+        result = json.loads(m.resident_recall_handler({'query':'past preferences'},session_id=invalid_session))
+        assert result['ok'] is False and result['executed'] is False
+    owner_binding = json.loads(Path(allowed.skill_proposal_binding_file).read_text())
+    owner_db = Path(owner_binding['hermes']['stateDb'])
+    with sqlite3.connect(owner_db) as db:
+        db.execute("update sessions set user_id='other-feishu-user' where id='resident-session'")
+    rejected = json.loads(m.resident_recall_handler({'query':'past preferences'},session_id='resident-session'))
+    assert rejected['ok'] is False and rejected['executed'] is False
+    assert calls == []
 
 
 def test_ledger_additive_consumer_migration_preserves_old_rows_as_unknown(tools):

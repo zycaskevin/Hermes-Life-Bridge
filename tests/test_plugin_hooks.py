@@ -1,3 +1,4 @@
+from dataclasses import replace
 from hermes_life_bridge import plugin
 from hermes_life_bridge.config import BridgeConfig
 from hermes_life_bridge.codex_decision import CODEX_DECISION_TOOL_NAME
@@ -94,6 +95,32 @@ def test_registers_candidate_only_skill_tool_without_other_agent_tools(monkeypat
     assert tool["check_fn"]() is True
     assert "install" in tool["description"] and "does not" in tool["description"]
     assert not {"digital_life_recall", "digital_life_research", "digital_life_status"}.intersection(ctx.tools)
+
+
+def test_resident_recall_tool_is_only_visible_after_explicit_opt_in(monkeypatch):
+    cfg = replace(
+        _config(False, False, False, True),
+        auto_recall_enabled=True,
+        memory_recall_binding_file='/owner-private/nancy/memory-binding.json',
+        resident_recall_tool_enabled=True,
+    )
+    monkeypatch.setattr(plugin.BridgeConfig, 'from_env', staticmethod(lambda: cfg))
+    monkeypatch.setattr(plugin, 'resident_recall_enabled', lambda: True)
+    monkeypatch.setattr(plugin, 'skill_proposal_enabled', lambda: True)
+    ctx = Ctx()
+    plugin.register(ctx)
+    assert 'digital_life_recall' in ctx.tools
+    assert ctx.tools['digital_life_recall']['toolset'] == 'digital_life'
+    assert ctx.tools['digital_life_recall']['check_fn']() is True
+    assert set(ctx.tools).isdisjoint({'digital_life_research', 'digital_life_status'})
+    assert SKILL_PROPOSAL_TOOL in ctx.tools
+
+    cfg_disabled = replace(cfg, resident_recall_tool_enabled=False)
+    monkeypatch.setattr(plugin.BridgeConfig, 'from_env', staticmethod(lambda: cfg_disabled))
+    hidden = Ctx()
+    plugin.register(hidden)
+    assert 'digital_life_recall' not in hidden.tools
+    assert SKILL_PROPOSAL_TOOL in hidden.tools
 
 
 def test_gateway_hook_always_allows(monkeypatch):
@@ -206,6 +233,8 @@ def test_pre_llm_call_skips_gateway_platform(monkeypatch):
 
 
 def test_pre_llm_call_injects_dld_context_for_gateway_without_double_ingestion(monkeypatch):
+    # Prevent the developer machine's live Nancy DLMF binding from entering a unit test.
+    monkeypatch.setattr(plugin, 'auto_recall_context', lambda *a, **kw: '')
     called = []
 
     class DummyBridge:
@@ -228,6 +257,7 @@ def test_pre_llm_call_injects_dld_context_for_gateway_without_double_ingestion(m
 
 
 def test_pre_llm_call_combines_development_and_affect_context(monkeypatch):
+    monkeypatch.setattr(plugin, 'auto_recall_context', lambda *a, **kw: '')
     monkeypatch.setattr(plugin, "_development_context", lambda: "<dld>EARLY_FORMATION</dld>")
     monkeypatch.setattr(plugin, "_affect_context", lambda: "<affect>curiosity=0.8</affect>")
     result = plugin.on_pre_llm_call(

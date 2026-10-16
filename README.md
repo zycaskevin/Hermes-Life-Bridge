@@ -29,6 +29,42 @@ HLB does **not** own Digital Life identity, canonical memory, personality, LiveS
 | Nancy 1h/24h/72h live soak tooling | ✅ Included; run after deployment |
 | Codex approval owner-decision routing | ✅ Implemented; disabled by default |
 
+## Nancy existing-Feishu verified recall (2026-10-16)
+
+The original Nancy Hermes Gateway remains the resident conversation host. Its
+identity is **did:arthurverse:nancy**; Lily/Luna's independent native-tool
+bundle is **not** granted to Nancy. An explicitly configured
+`HLB_RESIDENT_RECALL_TOOL_ENABLED=true` exposes **only** `digital_life_recall`
+through the existing DLMF memory-view binding, even with
+`HLB_AGENT_TOOLS_ENABLED=false`. Automatic memory context injection remains
+independent. `HLB_RESIDENT_RECALL_TIMEOUT_SECONDS` defaults to 12 seconds and
+may be increased to at most 15 seconds for the slower manual query path.
+
+The handler validates Nancy's immutable existing-resident skill/memory
+manifests, the owner-bound original Feishu direct-message session from the
+resident Hermes `state.db`, the hash-bound source allowlist and a real user
+message **before** any private DLMF retrieval. Missing, other-life, other-user,
+non-Feishu or synthetic sessions fail closed without returning memory. Successful
+retrieval returns verified, same-life DLMF records; a temporary retrieval
+failure returns an explicit error, never fabricated memories or success.
+
+A scoped activation entry is `python3 scripts/activate_nancy_resident_recall.py
+--check` followed by `--apply` only after review. It verifies an exact installed
+baseline, backs up the three source modules and HLB env privately, changes only
+those modules plus one opt-in setting, checks the registered tool and the real
+HLB Doctor, waits for transient Gateway API startup, and restores previous
+source/config on a failed acceptance. It does not change native research,
+Self Gateway, model providers, memory authority, canonical state or another
+Digital Life. Use its timestamped backup directory for rollback/reconciliation;
+never blindly rerun an interrupted update.
+
+**Evidence scope:** HLB regression, independent static review, installed
+plugin registration, real allowed Feishu session + DLMF memory retrieval, and
+forged session rejection. A new Feishu chat turn with model-selected tool
+invocation and response is still a separate human-visible E2E gate.
+Hermes/OpenClaw/Prime native research remains governed separately by the
+Owner-context signature, runtime hard budget and model-auth readiness.
+
 ## Safety invariants
 
 - Full installer defaults external proactive Contact **OFF**; the code-only live updater preserves the existing HLB environment byte-for-byte and never turns a disabled gate on.
