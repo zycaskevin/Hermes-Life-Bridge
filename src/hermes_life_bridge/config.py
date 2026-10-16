@@ -129,6 +129,9 @@ class BridgeConfig:
     # Manual user-initiated DLMF retrieval may wait longer than automatic context
     # injection; this does not alter the normal conversation timeout.
     resident_recall_timeout_seconds: float = 30.0
+    # Existing Nancy resident: authenticated, read-only AF/Runtime observability.
+    # Never implies live public-research or any native execution permission.
+    resident_runtime_status_enabled: bool = False
     # Candidate-only procedural skill proposals. This does not enable native
     # Hermes skill_manage or install/activate any runtime skill.
     skill_proposals_enabled: bool = False
@@ -312,6 +315,10 @@ class BridgeConfig:
             resident_recall_timeout_seconds=_bounded_seconds(
                 get("HLB_RESIDENT_RECALL_TIMEOUT_SECONDS", default="30"),
                 name="HLB_RESIDENT_RECALL_TIMEOUT_SECONDS", minimum=2.0, maximum=40.0,
+            ),
+            resident_runtime_status_enabled=_strict_feature_bool(
+                get("HLB_RESIDENT_RUNTIME_STATUS_ENABLED", default="false"),
+                name="HLB_RESIDENT_RUNTIME_STATUS_ENABLED",
             ),
             skill_proposals_enabled=_strict_feature_bool(
                 get("HLB_SKILL_PROPOSALS_ENABLED", default="false"), name="HLB_SKILL_PROPOSALS_ENABLED"

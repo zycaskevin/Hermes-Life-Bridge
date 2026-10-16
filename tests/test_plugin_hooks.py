@@ -4,6 +4,7 @@ from hermes_life_bridge.config import BridgeConfig
 from hermes_life_bridge.codex_decision import CODEX_DECISION_TOOL_NAME
 from hermes_life_bridge.work_producer import REPORT_TOOL_NAME
 from hermes_life_bridge.skill_proposal import TOOL as SKILL_PROPOSAL_TOOL
+from hermes_life_bridge.resident_runtime_status import TOOL as RUNTIME_STATUS_TOOL
 
 
 class Ctx:
@@ -121,6 +122,33 @@ def test_resident_recall_tool_is_only_visible_after_explicit_opt_in(monkeypatch)
     plugin.register(hidden)
     assert 'digital_life_recall' not in hidden.tools
     assert SKILL_PROPOSAL_TOOL in hidden.tools
+
+
+def test_original_resident_runtime_status_requires_own_flag_not_agent_tool_grant(monkeypatch):
+    cfg = replace(_config(), resident_runtime_status_enabled=True)
+    monkeypatch.setattr(plugin.BridgeConfig, 'from_env', staticmethod(lambda: cfg))
+    monkeypatch.setattr(plugin, 'resident_runtime_status_enabled', lambda: True)
+    ctx = Ctx()
+    plugin.register(ctx)
+    assert RUNTIME_STATUS_TOOL in ctx.tools
+    item = ctx.tools[RUNTIME_STATUS_TOOL]
+    assert item['toolset'] == 'digital_life'
+    assert item['schema']['function']['name'] == RUNTIME_STATUS_TOOL
+    assert item['schema']['function']['parameters']['properties'] == {}
+    assert item['check_fn']() is True
+    assert 'digital_life_research' not in ctx.tools
+    assert 'digital_life_status' not in ctx.tools
+    assert 'digital_life_recall' not in ctx.tools
+
+    monkeypatch.setattr(plugin.BridgeConfig, 'from_env', staticmethod(lambda: replace(cfg, resident_runtime_status_enabled=False)))
+    disabled = Ctx()
+    plugin.register(disabled)
+    assert RUNTIME_STATUS_TOOL not in disabled.tools
+
+    monkeypatch.setattr(plugin.BridgeConfig, 'from_env', staticmethod(lambda: replace(cfg, agent_tools_enabled=True)))
+    native = Ctx()
+    plugin.register(native)
+    assert RUNTIME_STATUS_TOOL not in native.tools
 
 
 def test_gateway_hook_always_allows(monkeypatch):

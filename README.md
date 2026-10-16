@@ -108,6 +108,47 @@ invocation and response is still a separate human-visible E2E gate.
 Hermes/OpenClaw/Prime native research remains governed separately by the
 Owner-context signature, runtime hard budget and model-auth readiness.
 
+## Nancy original-Feishu read-only Runtime status (2026-10-17)
+
+The original Nancy Feishu owner direct-message session can optionally expose
+`digital_life_runtime_status` through **the existing Hermes Life Bridge**. This
+is a small **observability tool**, not a second Router/Runtime or a research
+capability. It remains hidden unless
+`HLB_RESIDENT_RUNTIME_STATUS_ENABLED=true` is set explicitly; it also requires
+an exact Nancy DID, the existing owner-private resident binding and a real
+owner-allowlisted Feishu DM with a user message.
+
+The handler reads *only* the existing loopback Life Runtime health (port 8791)
+and governed research-preview health (port 8896), without model-supplied URLs,
+queries or credentials. Results are reduced to a safe schema containing Nancy's
+DID, continuity flag, the preview connectivity booleans for Hermes/OpenClaw/
+Prime, and **explicitly not verified** production authorization. In particular,
+`directRuntimeConnectivityObserved=true`, `previewLiveExecution=true`, or
+`previewResearchAuthorized=true` **never** implies AF admission or runtime
+switching. `productionRuntimeSwitchReady` and
+`productionExecutionPermittedByThisTool` stay false, and no task, canonical
+memory write, model invocation, grant, or Runtime selection is attempted.
+
+The one-time, exact-baseline, rollback-capable deployment is:
+
+```bash
+python3 scripts/activate_nancy_resident_runtime_status.py --check
+python3 scripts/activate_nancy_resident_runtime_status.py --apply
+```
+
+The rollout updates only the reviewed plugin registration/config and one new
+read-only module, appends the single opt-in setting, restarts only the existing
+Hermes Gateway, and requires Doctor `HEALTHY`, an isolated owner-scoped
+status-handler probe and forged-session rejection. The deployment explicitly
+reports `feishuProviderTurnVerified=false`: model-selected tool execution in a
+**new** Feishu provider turn remains a separate E2E acceptance, not inferred
+from plugin registration. The loopback health reader explicitly disables
+HTTP environment proxies and follows no redirects. It preserves existing
+DLMF/HLB, Feishu, Contact,
+Lifetime Hub, Identity and self-gateway authority. Lack of signed Owner
+reconciliation, verified model auth and hard budget remains a separate blocker
+for actual Agent Factory multi-Runtime execution.
+
 ## Safety invariants
 
 - Full installer defaults external proactive Contact **OFF**; the code-only live updater preserves the existing HLB environment byte-for-byte and never turns a disabled gate on.

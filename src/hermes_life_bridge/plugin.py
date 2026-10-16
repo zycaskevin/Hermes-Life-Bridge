@@ -12,6 +12,13 @@ from .agent_tools import (
     recall_handler, research_handler, status_handler,
     resident_recall_enabled, resident_recall_handler,
 )
+from .resident_runtime_status import (
+    TOOL as RESIDENT_RUNTIME_STATUS_TOOL,
+    SCHEMA as RESIDENT_RUNTIME_STATUS_SCHEMA,
+    TOOLSET as RESIDENT_RUNTIME_STATUS_TOOLSET,
+    enabled as resident_runtime_status_enabled,
+    handler as resident_runtime_status_handler,
+)
 from .skill_proposal import (
     TOOL as SKILL_PROPOSAL_TOOL,
     TOOL_SCHEMA as SKILL_PROPOSAL_SCHEMA,
@@ -379,6 +386,17 @@ def register(ctx):
                 name=RECALL, toolset=LIFE_TOOLSET, schema=LIFE_TOOL_SCHEMAS[RECALL],
                 handler=resident_recall_handler, check_fn=resident_recall_enabled,
                 description=LIFE_TOOL_SCHEMAS[RECALL]["function"]["description"],
+            )
+        if config is not None and not config.agent_tools_enabled and config.resident_runtime_status_enabled:
+            # Observability is distinct from AF task acceptance: this tool
+            # never issues a research request, authorization or Runtime call.
+            register_tool(
+                name=RESIDENT_RUNTIME_STATUS_TOOL,
+                toolset=RESIDENT_RUNTIME_STATUS_TOOLSET,
+                schema=RESIDENT_RUNTIME_STATUS_SCHEMA,
+                handler=resident_runtime_status_handler,
+                check_fn=resident_runtime_status_enabled,
+                description=RESIDENT_RUNTIME_STATUS_SCHEMA["function"]["description"],
             )
         if config is not None and config.skill_proposals_enabled:
             register_tool(
