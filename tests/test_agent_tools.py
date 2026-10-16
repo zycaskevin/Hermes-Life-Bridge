@@ -1,7 +1,10 @@
 from __future__ import annotations
 from dataclasses import replace
 import hashlib
+import io
 import json
+import threading
+import time
 import sqlite3
 from pathlib import Path
 from urllib import error as urlerror
@@ -474,7 +477,7 @@ def test_existing_resident_manual_recall_is_explicit_and_verified(resident_memor
     assert result['queryMode'] == 'provided'
     assert calls[0][0]['scope'] == resident_memory.scope
     assert calls[0][0]['topK'] == 3
-    assert calls[0][1] == cfg.resident_recall_timeout_seconds
+    assert cfg.resident_recall_timeout_seconds - 1 <= calls[0][1] <= cfg.resident_recall_timeout_seconds
     assert cfg.agent_tools_enabled is False
 
 
@@ -492,7 +495,7 @@ def test_verified_recall_failure_reports_sanitized_diagnostic_not_zero_matches(r
     for exc, reason, code in failures:
         def fail(_self, payload, timeout):
             assert payload['scope'] == resident_memory.scope
-            assert timeout == 30
+            assert 0 < timeout <= 30
             raise exc
         monkeypatch.setattr(m.MemoryOnlyRecallClient, '_http', fail)
         client = m.MemoryOnlyRecallClient(resident_memory.test_config)
@@ -500,12 +503,122 @@ def test_verified_recall_failure_reports_sanitized_diagnostic_not_zero_matches(r
         assert outcome['ok'] is False and outcome['verified'] is False
         assert outcome['error'] == 'verified_recall_unavailable'
         assert outcome['failureReason'] == reason
+        assert outcome['attempts'] == 1
         assert outcome.get('upstreamStatusCode') == code
         assert outcome['memories'] == []
         assert 'no conclusion' in outcome['notice']
         serialized = json.dumps(outcome)
         assert secret not in serialized and 'query which must never appear' not in serialized
         assert 'http://localhost/private' not in serialized
+
+
+def test_resident_manual_recall_retries_one_verified_read_after_dlmf_internal_failure(resident_memory, monkeypatch):
+    body = b'{"error":"digital_life_stack_request_failed"}'
+    calls = []
+
+    def http(_self, payload, timeout):
+        calls.append((payload, timeout))
+        if len(calls) == 1:
+            raise urlerror.HTTPError('http://example.invalid/private', 400, 'sensitive-message', None, io.BytesIO(body))
+        return retrieval(resident_memory, 'verified memory after retry')
+
+    monkeypatch.setattr(m.MemoryOnlyRecallClient, '_http', http)
+    client = m.MemoryOnlyRecallClient(resident_memory.test_config)
+    value = client.recall('important past decision', timeout=30, consumer='native_tool')
+    assert value['ok'] is True and value['verified'] is True and value['attempts'] == 2
+    assert value['lifeDid'] == DID and value['memories'][0]['text'] == 'verified memory after retry'
+    assert len(calls) == 2 and calls[0][0] == calls[1][0]
+    assert calls[0][0]['scope'] == resident_memory.scope
+    assert 0 < calls[1][1] <= calls[0][1] <= 30
+    assert 'sensitive-message' not in json.dumps(value)
+
+
+def test_dlmf_slow_trickling_error_body_cannot_exceed_absolute_deadline():
+    payload = b'{"error":"digital_life_stack_request_failed"}'
+
+    class SlowTrickleError(urlerror.HTTPError):
+        def __init__(self):
+            super().__init__('http://localhost/retrieval', 400, 'private', None, None)
+            self.cancelled = threading.Event()
+
+        def read(self, _maximum):
+            output = bytearray()
+            for byte in payload:
+                if self.cancelled.is_set():
+                    break
+                time.sleep(0.02)
+                output.append(byte)
+            return bytes(output)
+
+        def close(self):
+            self.cancelled.set()
+
+    error = SlowTrickleError()
+    begin = time.monotonic()
+    assert m._retryable_verified_retrieval_error(error, deadline=begin + 0.07) is False
+    assert time.monotonic() - begin < 0.4
+    assert error.cancelled.wait(0.3)
+    normal = urlerror.HTTPError('http://localhost/retrieval', 400, 'private', None, io.BytesIO(payload))
+    assert m._retryable_verified_retrieval_error(normal, deadline=time.monotonic() + 1) is True
+    wrong = urlerror.HTTPError('http://localhost/retrieval', 403, 'private', None, io.BytesIO(payload))
+    assert m._retryable_verified_retrieval_error(wrong, deadline=time.monotonic() + 1) is False
+
+
+def test_dlmf_blocked_error_body_and_blocked_close_do_not_hold_owner_deadline():
+    payload = b'{"error":"digital_life_stack_request_failed"}'
+
+    class StuckReadAndClose(urlerror.HTTPError):
+        def __init__(self):
+            super().__init__('http://localhost/retrieval', 400, 'private', None, None)
+            self.release = threading.Event()
+            self.read_entered = threading.Event()
+            self.close_entered = threading.Event()
+
+        def read(self, _maximum):
+            self.read_entered.set()
+            self.release.wait(timeout=2)
+            return payload
+
+        def close(self):
+            self.close_entered.set()
+            self.release.wait(timeout=2)
+
+    error = StuckReadAndClose()
+    begin = time.monotonic()
+    try:
+        result = m._retryable_verified_retrieval_error(error, deadline=begin + 0.07)
+        elapsed = time.monotonic() - begin
+        assert result is False
+        assert elapsed < 0.35
+        assert error.read_entered.is_set()
+        assert error.close_entered.wait(0.35)
+    finally:
+        # Release only after proving that the calling thread returned;
+        # background read/cleanup may then finish without leaking test workers.
+        error.release.set()
+
+
+def test_resident_recall_does_not_retry_wrong_scope_auth_or_auto_context(resident_memory, monkeypatch):
+    cases = (
+        (400, b'{"error":"scope_invalid"}', 'native_tool', 30),
+        (403, b'{"error":"digital_life_stack_request_failed"}', 'native_tool', 30),
+        (400, b'{"error":"digital_life_stack_request_failed"}', 'auto_context', 30),
+        (400, b'{"error":"digital_life_stack_request_failed"}', 'native_tool', 10),
+        (400, b'{"error":"digital_life_stack_request_failed","extra":"not_authorized"}', 'native_tool', 30),
+    )
+    for code, body, consumer, deadline in cases:
+        calls = []
+        def fail(_self, payload, timeout):
+            calls.append(payload)
+            raise urlerror.HTTPError('http://example.invalid/private', code, 'sensitive-credential', None, io.BytesIO(body))
+        monkeypatch.setattr(m.MemoryOnlyRecallClient, '_http', fail)
+        client = m.MemoryOnlyRecallClient(resident_memory.test_config)
+        outcome = client.recall('private owner topic', timeout=deadline, consumer=consumer)
+        assert outcome['ok'] is False and outcome['verified'] is False
+        assert outcome['attempts'] == 1 and len(calls) == 1
+        assert outcome['memories'] == []
+        assert outcome.get('upstreamStatusCode') == code
+        assert 'sensitive-credential' not in json.dumps(outcome)
 
 
 def test_existing_resident_manual_recall_fail_closed(resident_memory, monkeypatch):

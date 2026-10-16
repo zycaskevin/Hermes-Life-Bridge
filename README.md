@@ -53,7 +53,38 @@ retrieval returns verified, same-life DLMF records; a temporary retrieval
 failure returns an explicit error plus a bounded, non-sensitive `failureReason`
 (and possibly a safe HTTP status). No exception text, URL, query or memory
 content is placed in failure diagnostics. An unavailable retrieval must never
-be interpreted as zero matching memories or fabricated success.
+be interpreted as zero matching memories or fabricated success. For the
+owner-initiated manual tool only, one extra **read-only** attempt is allowed
+within the same 30-second deadline if DLMF returns HTTP 400 with the exact
+public provider-failure code `digital_life_stack_request_failed`. The retry
+keeps the same authenticated life scope, never retriggers canonical writes, and
+returns `attempts=1` or `attempts=2` for traceability. Validation failures,
+wrong/unauthorized sessions, authorization errors, automatic context lookups
+and exhausted deadlines are never retried.
+
+For an already upgraded resident, `python3
+scripts/upgrade_nancy_resident_recall_retry.py --check` / `--apply`
+installs only the bounded retry implementation after matching the exact
+previous source and preserving the configured 30-second budget. It backs up
+source/config, restarts only the original Hermes Gateway and requires both
+plugin admission and full HLB Doctor readiness; any failure restores source.
+
+**Live Nancy GB10 evidence, 2026-10-16 (Asia/Taipei):** The original
+owner-approved Feishu DM session was verified against Hermes `state.db`.
+Before bounded retry, the same topic query once failed at approximately 10s
+with DLMF's generic provider error while the next call returned three verified
+DLMF memories. After the reviewed bounded retry code was installed,
+`NANCY_BOUNDED_READ_RETRY_UPGRADE_PASS` and HLB Doctor `HEALTHY` were
+observed. Three consecutive real owner-session → HLB → DLMF calls for the
+same exact query succeeded on their first attempts, each returning three
+verified memories (4.77s, 4.68s, 4.59s). The matching keyword metadata
+included Digital Life Stack, Agent Factory, OpenClaw, Hermes, and Nancy;
+a forged session was rejected before retrieval. These results do not prove
+all future network calls will succeed: the live successes did not naturally
+exercise attempt two, which is covered by controlled positive and negative
+regression tests. The model voluntarily calling the tool during a *new*
+Feishu user turn is also a separate end-to-end acceptance gate. AF native
+research still requires its own approved owner context/model-auth/budget gates.
 
 A scoped activation entry is `python3 scripts/activate_nancy_resident_recall.py
 --check` followed by `--apply` only after review. For existing live Nancy
